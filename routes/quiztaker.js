@@ -1,19 +1,19 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const { verifyQuizTaker } = require('../middleware/auth');
-const QuizTaker = require('../models/QuizTaker');
-const Quiz = require('../models/Quiz');
-const QuizSubmission = require('../models/QuizSubmission');
+const { verifyQuizTaker } = require("../middleware/auth");
+const QuizTaker = require("../models/QuizTaker");
+const Quiz = require("../models/Quiz");
+const QuizSubmission = require("../models/QuizSubmission");
 
 // @route   GET /api/quiztaker/dashboard
 // @desc    Get quiz taker dashboard data
 // @access  Private (Quiz taker only)
-router.get('/dashboard', verifyQuizTaker, async (req, res) => {
+router.get("/dashboard", verifyQuizTaker, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .select('-password')
-      .populate('assignedQuizzes.quizId', 'settings')
-      .populate('assignedQuizzes.submissionId');
+      .select("-password")
+      .populate("assignedQuizzes.quizId", "settings")
+      .populate("assignedQuizzes.submissionId");
 
     res.json({
       success: true,
@@ -26,10 +26,10 @@ router.get('/dashboard', verifyQuizTaker, async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
     });
   }
 });
@@ -37,12 +37,12 @@ router.get('/dashboard', verifyQuizTaker, async (req, res) => {
 // @route   GET /api/quiztaker/profile
 // @desc    Get quiz taker profile
 // @access  Private (Quiz taker only)
-router.get('/profile', verifyQuizTaker, async (req, res) => {
+router.get("/profile", verifyQuizTaker, async (req, res) => {
   try {
     const quizTaker = req.quizTaker;
-    
+
     const completedCount = quizTaker.assignedQuizzes.filter(
-      aq => aq.status === 'completed'
+      (aq) => aq.status === "completed"
     ).length;
 
     res.json({
@@ -57,10 +57,10 @@ router.get('/profile', verifyQuizTaker, async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
     });
   }
 });
@@ -68,27 +68,27 @@ router.get('/profile', verifyQuizTaker, async (req, res) => {
 // @route   GET /api/quiztaker/quiz/:quizId
 // @desc    Get quiz details (without answers)
 // @access  Private (Quiz taker only)
-router.get('/quiz/:quizId', verifyQuizTaker, async (req, res) => {
+router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-    
+
     // Check if quiz is assigned to this quiz taker
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      aq => aq.quizId.toString() === req.params.quizId
+      (aq) => aq.quizId.toString() === req.params.quizId
     );
 
     if (!assignedQuiz) {
       return res.status(403).json({
         success: false,
-        message: 'This quiz is not assigned to you',
+        message: "This quiz is not assigned to you",
       });
     }
 
     // Check if already completed
-    if (assignedQuiz.status === 'completed') {
+    if (assignedQuiz.status === "completed") {
       return res.status(400).json({
         success: false,
-        message: 'You have already completed this quiz',
+        message: "You have already completed this quiz",
       });
     }
 
@@ -97,19 +97,19 @@ router.get('/quiz/:quizId', verifyQuizTaker, async (req, res) => {
     if (!quiz) {
       return res.status(404).json({
         success: false,
-        message: 'Quiz not found',
+        message: "Quiz not found",
       });
     }
 
     if (!quiz.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'This quiz is not currently active',
+        message: "This quiz is not currently active",
       });
     }
 
     // Return quiz without correct answers
-    const questionsWithoutAnswers = quiz.questions.map(q => ({
+    const questionsWithoutAnswers = quiz.questions.map((q) => ({
       _id: q._id,
       type: q.type,
       question: q.question,
@@ -131,7 +131,7 @@ router.get('/quiz/:quizId', verifyQuizTaker, async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -140,51 +140,51 @@ router.get('/quiz/:quizId', verifyQuizTaker, async (req, res) => {
 // @route   POST /api/quiztaker/quiz/:quizId/start
 // @desc    Start a quiz (marks as in-progress)
 // @access  Private (Quiz taker only)
-router.post('/quiz/:quizId/start', verifyQuizTaker, async (req, res) => {
+router.post("/quiz/:quizId/start", verifyQuizTaker, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-    
+
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      aq => aq.quizId.toString() === req.params.quizId
+      (aq) => aq.quizId.toString() === req.params.quizId
     );
 
     if (!assignedQuiz) {
       return res.status(403).json({
         success: false,
-        message: 'This quiz is not assigned to you',
+        message: "This quiz is not assigned to you",
       });
     }
 
-    if (assignedQuiz.status === 'completed') {
+    if (assignedQuiz.status === "completed") {
       return res.status(400).json({
         success: false,
-        message: 'You have already completed this quiz',
+        message: "You have already completed this quiz",
       });
     }
 
-    if (assignedQuiz.status === 'in-progress') {
+    if (assignedQuiz.status === "in-progress") {
       return res.json({
         success: true,
-        message: 'Quiz already in progress',
+        message: "Quiz already in progress",
         startedAt: assignedQuiz.startedAt,
       });
     }
 
     // Mark as in-progress
-    assignedQuiz.status = 'in-progress';
+    assignedQuiz.status = "in-progress";
     assignedQuiz.startedAt = new Date();
-    
+
     await quizTaker.save();
 
     res.json({
       success: true,
-      message: 'Quiz started successfully',
+      message: "Quiz started successfully",
       startedAt: assignedQuiz.startedAt,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -193,7 +193,8 @@ router.post('/quiz/:quizId/start', verifyQuizTaker, async (req, res) => {
 // @route   POST /api/quiztaker/quiz/:quizId/submit
 // @desc    Submit quiz answers
 // @access  Private (Quiz taker only)
-router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
+// Fixed submit route
+router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
   try {
     const { answers } = req.body;
     // answers format: [{ questionId, answer }]
@@ -201,34 +202,34 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide answers array',
+        message: "Please provide answers array",
       });
     }
 
     const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-    
+
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      aq => aq.quizId.toString() === req.params.quizId
+      (aq) => aq.quizId.toString() === req.params.quizId
     );
 
     if (!assignedQuiz) {
       return res.status(403).json({
         success: false,
-        message: 'This quiz is not assigned to you',
+        message: "This quiz is not assigned to you",
       });
     }
 
-    if (assignedQuiz.status === 'completed') {
+    if (assignedQuiz.status === "completed") {
       return res.status(400).json({
         success: false,
-        message: 'You have already completed this quiz',
+        message: "You have already completed this quiz",
       });
     }
 
-    if (assignedQuiz.status !== 'in-progress') {
+    if (assignedQuiz.status !== "in-progress") {
       return res.status(400).json({
         success: false,
-        message: 'You must start the quiz before submitting',
+        message: "You must start the quiz before submitting",
       });
     }
 
@@ -237,7 +238,7 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
     if (!quiz) {
       return res.status(404).json({
         success: false,
-        message: 'Quiz not found',
+        message: "Quiz not found",
       });
     }
 
@@ -246,9 +247,9 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
     let totalScore = 0;
     let hasEssayQuestions = false;
 
-    answers.forEach(submittedAnswer => {
+    answers.forEach((submittedAnswer) => {
       const question = quiz.questions.id(submittedAnswer.questionId);
-      
+
       if (!question) return;
 
       const answerObj = {
@@ -262,8 +263,33 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
 
       // Auto-grade based on question type
       switch (question.type) {
-        case 'multiple-choice':
-          if (submittedAnswer.answer === question.correctAnswer) {
+        case "multiple-choice":
+          const correctOptionLetter = question.correctAnswer; // e.g., "C"
+
+          let optionsArray;
+          if (Array.isArray(question.options)) {
+            optionsArray = question.options;
+          } else if (typeof question.options === "string") {
+            optionsArray = question.options.split("|");
+          } else {
+            optionsArray = Object.values(question.options);
+          }
+
+          // Find the option that starts with the correct letter
+          const correctOption = optionsArray.find((opt) =>
+            String(opt)
+              .trim()
+              .startsWith(correctOptionLetter + ".")
+          );
+
+          console.log("=== MULTIPLE CHOICE DEBUG ===");
+          console.log("Correct option (full):", correctOption);
+          console.log("Submitted answer:", submittedAnswer.answer);
+          console.log("Match?", submittedAnswer.answer === correctOption);
+          console.log("============================");
+
+          // Compare the full option text
+          if (submittedAnswer.answer === correctOption) {
             answerObj.isCorrect = true;
             answerObj.pointsAwarded = question.points;
             totalScore += question.points;
@@ -272,8 +298,22 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
           }
           break;
 
-        case 'true-false':
-          if (submittedAnswer.answer === question.correctAnswer) {
+        case "true-false":
+          console.log("=== TRUE-FALSE DEBUG ===");
+          console.log("Question:", question.question);
+          console.log("Correct answer:", question.correctAnswer);
+          console.log("Submitted answer:", submittedAnswer.answer);
+          console.log(
+            "Match?",
+            String(submittedAnswer.answer).toLowerCase() ===
+              String(question.correctAnswer).toLowerCase()
+          );
+          console.log("=======================");
+
+          if (
+            String(submittedAnswer.answer).toLowerCase() ===
+            String(question.correctAnswer).toLowerCase()
+          ) {
             answerObj.isCorrect = true;
             answerObj.pointsAwarded = question.points;
             totalScore += question.points;
@@ -282,11 +322,21 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
           }
           break;
 
-        case 'fill-in-the-blanks':
-          // Case-insensitive comparison, trim whitespace
-          const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-          const correctAns = String(question.correctAnswer).trim().toLowerCase();
-          
+        case "fill-in-the-blanks":
+          const submittedAns = String(submittedAnswer.answer)
+            .trim()
+            .toLowerCase();
+          const correctAns = String(question.correctAnswer)
+            .trim()
+            .toLowerCase();
+
+          console.log("=== FILL-IN-BLANKS DEBUG ===");
+          console.log("Question:", question.question);
+          console.log("Correct answer (processed):", correctAns);
+          console.log("Submitted answer (processed):", submittedAns);
+          console.log("Match?", submittedAns === correctAns);
+          console.log("============================");
+
           if (submittedAns === correctAns) {
             answerObj.isCorrect = true;
             answerObj.pointsAwarded = question.points;
@@ -296,8 +346,7 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
           }
           break;
 
-        case 'essay':
-          // Essay questions require manual grading
+        case "essay":
           answerObj.isCorrect = null;
           hasEssayQuestions = true;
           break;
@@ -321,21 +370,24 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
       timeTaken,
       score: totalScore,
       totalPoints: quiz.totalPoints,
-      status: hasEssayQuestions ? 'pending-manual-grading' : 'auto-graded',
+      status: hasEssayQuestions ? "pending-manual-grading" : "auto-graded",
     });
 
     await submission.save();
 
     // Update quiz taker status
-    assignedQuiz.status = 'completed';
+    assignedQuiz.status = "completed";
     assignedQuiz.completedAt = endTime;
     assignedQuiz.submissionId = submission._id;
-    
+
+    // IMPORTANT: Mark the subdocument array as modified for Mongoose to save it
+    quizTaker.markModified("assignedQuizzes");
+
     await quizTaker.save();
 
-    res.json({
+    return res.json({
       success: true,
-      message: 'Quiz submitted successfully',
+      message: "Quiz submitted successfully",
       submission: {
         id: submission._id,
         score: submission.score,
@@ -346,9 +398,10 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Submit quiz error:", error);
+    return res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -357,15 +410,16 @@ router.post('/quiz/:quizId/submit', verifyQuizTaker, async (req, res) => {
 // @route   GET /api/quiztaker/submission/:submissionId
 // @desc    Get submission results
 // @access  Private (Quiz taker only)
-router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
+router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
   try {
-    const submission = await QuizSubmission.findById(req.params.submissionId)
-      .populate('quizId');
+    const submission = await QuizSubmission.findById(
+      req.params.submissionId
+    ).populate("quizId");
 
     if (!submission) {
       return res.status(404).json({
         success: false,
-        message: 'Submission not found',
+        message: "Submission not found",
       });
     }
 
@@ -373,7 +427,7 @@ router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
     if (submission.quizTakerId.toString() !== req.quizTaker._id.toString()) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied',
+        message: "Access denied",
       });
     }
 
@@ -386,7 +440,7 @@ router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
     if (!canViewResults) {
       return res.status(403).json({
         success: false,
-        message: 'Results viewing is not allowed for this quiz',
+        message: "Results viewing is not allowed for this quiz",
       });
     }
 
@@ -406,7 +460,7 @@ router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
 
     // Include answers if allowed
     if (canViewAnswers) {
-      responseData.submission.answers = submission.answers.map(answer => {
+      responseData.submission.answers = submission.answers.map((answer) => {
         const question = quiz.questions.id(answer.questionId);
         return {
           question: question.question,
@@ -424,7 +478,7 @@ router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -433,18 +487,18 @@ router.get('/submission/:submissionId', verifyQuizTaker, async (req, res) => {
 // @route   GET /api/quiztaker/my-submissions
 // @desc    Get all submissions by this quiz taker
 // @access  Private (Quiz taker only)
-router.get('/my-submissions', verifyQuizTaker, async (req, res) => {
+router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
   try {
     const submissions = await QuizSubmission.find({
       quizTakerId: req.quizTaker._id,
     })
-    .populate('quizId', 'settings.title settings.isQuizChallenge')
-    .sort({ submittedAt: -1 });
+      .populate("quizId", "settings.title settings.isQuizChallenge")
+      .sort({ submittedAt: -1 });
 
     res.json({
       success: true,
       count: submissions.length,
-      submissions: submissions.map(sub => ({
+      submissions: submissions.map((sub) => ({
         id: sub._id,
         quizTitle: sub.quizId.settings.title,
         score: sub.score,
@@ -457,7 +511,7 @@ router.get('/my-submissions', verifyQuizTaker, async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }

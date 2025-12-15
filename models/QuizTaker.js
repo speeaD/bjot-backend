@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const crypto = require('crypto');
 
 const QuizTakerSchema = new mongoose.Schema({
   email: {
@@ -8,10 +7,6 @@ const QuizTakerSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true,
-  },
-  password: {
-    type: String,
-    required: true,
   },
   accessCode: {
     type: String,
@@ -30,6 +25,32 @@ const QuizTakerSchema = new mongoose.Schema({
     score: Number,
     completedAt: Date,
   }],
+  assignedQuizzes: [{
+    quizId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Quiz',
+      required: true,
+    },
+    assignedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'in-progress', 'completed'],
+      default: 'pending',
+    },
+    startedAt: {
+      type: Date,
+    },
+    completedAt: {
+      type: Date,
+    },
+    submissionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'QuizSubmission',
+    },
+  }],
   createdAt: {
     type: Date,
     default: Date.now,
@@ -44,21 +65,6 @@ QuizTakerSchema.statics.generateAccessCode = function() {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
-};
-
-// Hash password before saving
-QuizTakerSchema.pre('save', async function() { 
-  if (!this.isModified('password')) return;
-  
-  const bcrypt = require('bcryptjs');
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-});
-
-// Method to compare password
-QuizTakerSchema.methods.comparePassword = async function(candidatePassword) {
-  const bcrypt = require('bcryptjs');
-  return await bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model('QuizTaker', QuizTakerSchema);

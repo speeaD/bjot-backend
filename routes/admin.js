@@ -9,13 +9,13 @@ const Quiz = require('../models/Quiz');
 // @access  Private (Admin only)
 router.post('/quiztaker', verifyAdmin, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email } = req.body;
 
     // Validation
-    if (!email || !password) {
+    if (!email ) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Please provide email and password' 
+        message: 'Please provide email address' 
       });
     }
 
@@ -41,7 +41,6 @@ router.post('/quiztaker', verifyAdmin, async (req, res) => {
     // Create quiz taker
     const quizTaker = new QuizTaker({
       email,
-      password,
       accessCode,
     });
 
@@ -73,7 +72,6 @@ router.post('/quiztaker', verifyAdmin, async (req, res) => {
 router.get('/quiztakers', verifyAdmin, async (req, res) => {
   try {
     const quizTakers = await QuizTaker.find()
-      .select('-password')
       .populate('assignedQuizzes.quizId', 'settings.title')
       .sort({ createdAt: -1 });
 
@@ -97,7 +95,6 @@ router.get('/quiztakers', verifyAdmin, async (req, res) => {
 router.get('/quiztaker/:id', verifyAdmin, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.params.id)
-      .select('-password')
       .populate('assignedQuizzes.quizId', 'settings.title settings.isQuizChallenge')
       .populate('assignedQuizzes.submissionId');
 
@@ -126,7 +123,7 @@ router.get('/quiztaker/:id', verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put('/quiztaker/:id', verifyAdmin, async (req, res) => {
   try {
-    const { email, password, isActive } = req.body;
+    const { email, isActive } = req.body;
 
     const quizTaker = await QuizTaker.findById(req.params.id);
 
@@ -139,7 +136,6 @@ router.put('/quiztaker/:id', verifyAdmin, async (req, res) => {
 
     // Update fields
     if (email) quizTaker.email = email;
-    if (password) quizTaker.password = password;
     if (typeof isActive !== 'undefined') quizTaker.isActive = isActive;
 
     await quizTaker.save();
@@ -228,6 +224,11 @@ router.post('/assign-quiz', verifyAdmin, async (req, res) => {
         if (!quizTaker) {
           results.failed.push({ takerId, reason: 'Quiz taker not found' });
           continue;
+        }
+
+        // Initialize assignedQuizzes if it doesn't exist
+        if (!quizTaker.assignedQuizzes) {
+          quizTaker.assignedQuizzes = [];
         }
 
         // Check if quiz is already assigned

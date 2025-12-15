@@ -84,11 +84,10 @@ const QuizSubmissionSchema = new mongoose.Schema({
 });
 
 // Calculate percentage before saving
-QuizSubmissionSchema.pre('save', function(next) {
+QuizSubmissionSchema.pre('save', function() {
   if (this.totalPoints > 0) {
     this.percentage = Math.round((this.score / this.totalPoints) * 100);
   }
-  next();
 });
 
 module.exports = mongoose.model('QuizSubmission', QuizSubmissionSchema);

@@ -28,7 +28,7 @@ exports.verifyAdmin = async (req, res, next) => {
     if (!admin) {
       return res.status(401).json({ 
         success: false, 
-        message: 'Invalid token.' 
+        message: 'Unauthorized' 
       });
     }
 
@@ -37,7 +37,7 @@ exports.verifyAdmin = async (req, res, next) => {
   } catch (error) {
     res.status(401).json({ 
       success: false, 
-      message: 'Invalid token.', 
+      message: 'Unauthorized', 
       error: error.message 
     });
   }
@@ -69,7 +69,7 @@ exports.verifyQuizTaker = async (req, res, next) => {
     if (!quizTaker) {
       return res.status(401).json({ 
         success: false, 
-        message: 'Invalid token.' 
+        message: 'Unauthorized' 
       });
     }
 
@@ -81,11 +81,12 @@ exports.verifyQuizTaker = async (req, res, next) => {
     }
 
     req.quizTaker = quizTaker;
-    next();
+    next(); // ✅ This looks correct
   } catch (error) {
-    res.status(401).json({ 
+    console.error('Verify quiz taker error:', error);
+    return res.status(401).json({  // ✅ Added return here
       success: false, 
-      message: 'Invalid token.', 
+      message: 'Unauthorized', 
       error: error.message 
     });
   }
