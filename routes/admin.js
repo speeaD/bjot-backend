@@ -5,26 +5,37 @@ const QuizTaker = require('../models/QuizTaker');
 const Quiz = require('../models/Quiz');
 
 // @route   POST /api/admin/quiztaker
-// @desc    Create a new quiz taker
+// @desc    Create a new PREMIUM quiz taker
 // @access  Private (Admin only)
 router.post('/quiztaker', verifyAdmin, async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, name, questionSetCombination } = req.body;
 
     // Validation
-    if (!email ) {
+    if (!email) {
       return res.status(400).json({ 
         success: false, 
         message: 'Please provide email address' 
       });
     }
 
-    // Check if quiz taker already exists
-    const existingQuizTaker = await QuizTaker.findOne({ email });
+    if (!questionSetCombination || !Array.isArray(questionSetCombination) || questionSetCombination.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid question set combination (array of 4 question set IDs)',
+      });
+    }
+
+    // Check if premium quiz taker with this email already exists
+    const existingQuizTaker = await QuizTaker.findOne({ 
+      email,
+      accountType: 'premium'
+    });
+    
     if (existingQuizTaker) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Quiz taker with this email already exists' 
+        message: 'Premium quiz taker with this email already exists' 
       });
     }
 
@@ -38,26 +49,33 @@ router.post('/quiztaker', verifyAdmin, async (req, res) => {
       if (!existing) isUnique = true;
     }
 
-    // Create quiz taker
+    // Create premium quiz taker
     const quizTaker = new QuizTaker({
+      accountType: 'premium',
       email,
+      name: name || '',
       accessCode,
+      questionSetCombination,
     });
 
     await quizTaker.save();
 
     res.status(201).json({
       success: true,
-      message: 'Quiz taker created successfully',
+      message: 'Premium quiz taker created successfully',
       quizTaker: {
         id: quizTaker._id,
+        accountType: quizTaker.accountType,
         email: quizTaker.email,
+        name: quizTaker.name,
         accessCode: quizTaker.accessCode,
+        questionSetCombination: quizTaker.questionSetCombination,
         isActive: quizTaker.isActive,
         createdAt: quizTaker.createdAt,
       },
     });
   } catch (error) {
+    console.log(error);
     res.status(500).json({ 
       success: false, 
       message: 'Server error', 
@@ -67,12 +85,20 @@ router.post('/quiztaker', verifyAdmin, async (req, res) => {
 });
 
 // @route   GET /api/admin/quiztakers
-// @desc    Get all quiz takers
+// @desc    Get all quiz takers (with filter for account type)
 // @access  Private (Admin only)
 router.get('/quiztakers', verifyAdmin, async (req, res) => {
   try {
-    const quizTakers = await QuizTaker.find()
+    const { accountType } = req.query;
+    
+    const filter = {};
+    if (accountType && ['premium', 'regular'].includes(accountType)) {
+      filter.accountType = accountType;
+    }
+
+    const quizTakers = await QuizTaker.find(filter)
       .populate('assignedQuizzes.quizId', 'settings.title')
+      .populate('questionSetCombination', 'title')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -96,7 +122,8 @@ router.get('/quiztaker/:id', verifyAdmin, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.params.id)
       .populate('assignedQuizzes.quizId', 'settings.title settings.isQuizChallenge')
-      .populate('assignedQuizzes.submissionId');
+      .populate('assignedQuizzes.submissionId')
+      .populate('questionSetCombination', 'title');
 
     if (!quizTaker) {
       return res.status(404).json({ 
@@ -123,7 +150,7 @@ router.get('/quiztaker/:id', verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put('/quiztaker/:id', verifyAdmin, async (req, res) => {
   try {
-    const { email, isActive } = req.body;
+    const { email, name, isActive, questionSetCombination } = req.body;
 
     const quizTaker = await QuizTaker.findById(req.params.id);
 
@@ -134,9 +161,22 @@ router.put('/quiztaker/:id', verifyAdmin, async (req, res) => {
       });
     }
 
+    // Only allow updating premium accounts
+    if (quizTaker.accountType !== 'premium') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot update regular student accounts',
+      });
+    }
+
     // Update fields
     if (email) quizTaker.email = email;
+    if (name) quizTaker.name = name;
     if (typeof isActive !== 'undefined') quizTaker.isActive = isActive;
+    
+    if (questionSetCombination && Array.isArray(questionSetCombination) && questionSetCombination.length === 4) {
+      quizTaker.questionSetCombination = questionSetCombination;
+    }
 
     await quizTaker.save();
 
@@ -145,8 +185,11 @@ router.put('/quiztaker/:id', verifyAdmin, async (req, res) => {
       message: 'Quiz taker updated successfully',
       quizTaker: {
         id: quizTaker._id,
+        accountType: quizTaker.accountType,
         email: quizTaker.email,
+        name: quizTaker.name,
         accessCode: quizTaker.accessCode,
+        questionSetCombination: quizTaker.questionSetCombination,
         isActive: quizTaker.isActive,
       },
     });
@@ -189,7 +232,7 @@ router.delete('/quiztaker/:id', verifyAdmin, async (req, res) => {
 });
 
 // @route   POST /api/admin/assign-quiz
-// @desc    Assign quiz to quiz taker(s)
+// @desc    Assign quiz to PREMIUM quiz taker(s) - with combination validation
 // @access  Private (Admin only)
 router.post('/assign-quiz', verifyAdmin, async (req, res) => {
   try {
@@ -223,6 +266,24 @@ router.post('/assign-quiz', verifyAdmin, async (req, res) => {
         
         if (!quizTaker) {
           results.failed.push({ takerId, reason: 'Quiz taker not found' });
+          continue;
+        }
+
+        // Only allow assigning to premium students
+        if (quizTaker.accountType !== 'premium') {
+          results.failed.push({ takerId, reason: 'Can only assign quizzes to premium students' });
+          continue;
+        }
+
+        // Validate question set combination match
+        const quizCombo = quiz.questionSetCombination.map(id => id.toString()).sort();
+        const takerCombo = quizTaker.questionSetCombination.map(id => id.toString()).sort();
+        
+        if (JSON.stringify(quizCombo) !== JSON.stringify(takerCombo)) {
+          results.failed.push({ 
+            takerId, 
+            reason: 'Question set combination does not match quiz requirements' 
+          });
           continue;
         }
 
@@ -284,6 +345,13 @@ router.delete('/unassign-quiz', verifyAdmin, async (req, res) => {
       });
     }
 
+    if (quizTaker.accountType !== 'premium') {
+      return res.status(400).json({
+        success: false,
+        message: 'Can only unassign quizzes from premium students',
+      });
+    }
+
     // Check if quiz is assigned and not completed
     const assignedQuiz = quizTaker.assignedQuizzes.find(
       aq => aq.quizId.toString() === quizId
@@ -324,16 +392,24 @@ router.delete('/unassign-quiz', verifyAdmin, async (req, res) => {
 });
 
 // @route   GET /api/admin/submissions
-// @desc    Get all quiz submissions
+// @desc    Get all quiz submissions (with filter for account type)
 // @access  Private (Admin only)
 router.get('/submissions', verifyAdmin, async (req, res) => {
   try {
     const QuizSubmission = require('../models/QuizSubmission');
+    const { accountType } = req.query;
     
-    const submissions = await QuizSubmission.find()
-      .populate('quizId', 'settings.title')
-      .populate('quizTakerId', 'email accessCode')
+    let submissions = await QuizSubmission.find()
+      .populate('quizId', 'settings.title settings.isOpenQuiz')
+      .populate('quizTakerId', 'email name accountType accessCode')
       .sort({ submittedAt: -1 });
+
+    // Filter by account type if specified
+    if (accountType && ['premium', 'regular'].includes(accountType)) {
+      submissions = submissions.filter(sub => 
+        sub.quizTakerId && sub.quizTakerId.accountType === accountType
+      );
+    }
 
     res.json({
       success: true,
@@ -358,7 +434,7 @@ router.get('/submission/:id', verifyAdmin, async (req, res) => {
     
     const submission = await QuizSubmission.findById(req.params.id)
       .populate('quizId')
-      .populate('quizTakerId', 'email accessCode');
+      .populate('quizTakerId', 'email name accountType accessCode');
 
     if (!submission) {
       return res.status(404).json({
@@ -386,7 +462,6 @@ router.get('/submission/:id', verifyAdmin, async (req, res) => {
 router.put('/grade-essay/:submissionId', verifyAdmin, async (req, res) => {
   try {
     const { grades, feedback } = req.body;
-    // grades format: [{ questionId, pointsAwarded }]
 
     const QuizSubmission = require('../models/QuizSubmission');
     const submission = await QuizSubmission.findById(req.params.submissionId);

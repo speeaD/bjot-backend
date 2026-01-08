@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const QuestionSchema = new mongoose.Schema({
+const QuizQuestionSchema = new mongoose.Schema({
   type: {
     type: String,
     enum: ['multiple-choice', 'essay', 'true-false', 'fill-in-the-blanks'],
@@ -10,12 +10,11 @@ const QuestionSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  // For multiple choice
   options: [{
     type: String,
   }],
   correctAnswer: {
-    type: mongoose.Schema.Types.Mixed, // Can be string, number, or array
+    type: mongoose.Schema.Types.Mixed,
   },
   points: {
     type: Number,
@@ -25,10 +24,35 @@ const QuestionSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  originalQuestionId: {
+    type: mongoose.Schema.Types.ObjectId,
+  }
+}, { _id: true });
+
+const QuizQuestionSetSchema = new mongoose.Schema({
+  questionSetId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'QuestionSet',
+    required: true,
+  },
+  title: {
+    type: String,
+    required: true,
+  },
+  questions: [QuizQuestionSchema],
+  totalPoints: {
+    type: Number,
+    default: 0,
+  },
+  order: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 4,
+  }
 }, { _id: true });
 
 const QuizSchema = new mongoose.Schema({
-  // Settings Section
   settings: {
     coverImage: {
       type: String,
@@ -40,6 +64,11 @@ const QuizSchema = new mongoose.Schema({
       trim: true,
     },
     isQuizChallenge: {
+      type: Boolean,
+      default: false,
+    },
+    // NEW: Flag for open quizzes
+    isOpenQuiz: {
       type: Boolean,
       default: false,
     },
@@ -92,10 +121,28 @@ const QuizSchema = new mongoose.Schema({
     },
   },
   
-  // Questions Section
-  questions: [QuestionSchema],
+  questionSets: {
+    type: [QuizQuestionSetSchema],
+    validate: {
+      validator: function(v) {
+        return v.length === 4;
+      },
+      message: 'A quiz must have exactly 4 question sets'
+    }
+  },
   
-  // Additional fields
+  // NEW: Track the question set combination used in this quiz
+  questionSetCombination: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'QuestionSet',
+    validate: {
+      validator: function(v) {
+        return v.length === 4;
+      },
+      message: 'Question set combination must contain exactly 4 question sets'
+    }
+  },
+  
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Admin',
@@ -119,10 +166,18 @@ const QuizSchema = new mongoose.Schema({
   },
 });
 
-// Update totalPoints before saving
-QuizSchema.pre('save', async function() {
-    if (this.questions && this.questions.length > 0) {
-    this.totalPoints = this.questions.reduce((sum, q) => sum + (q.points || 0), 0);
+// Update totalPoints and questionSetCombination before saving
+QuizSchema.pre('save', function() {
+  if (this.questionSets && this.questionSets.length > 0) {
+    // Calculate total points from all question sets
+    this.totalPoints = this.questionSets.reduce((sum, qs) => {
+      const setTotal = qs.questions.reduce((qSum, q) => qSum + (q.points || 0), 0);
+      qs.totalPoints = setTotal;
+      return sum + setTotal;
+    }, 0);
+    
+    // Update questionSetCombination
+    this.questionSetCombination = this.questionSets.map(qs => qs.questionSetId);
   }
   this.updatedAt = Date.now();
 });

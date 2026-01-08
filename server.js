@@ -40,11 +40,14 @@ mongoose.connect(process.env.MONGODB_URI)
 .then(() => console.log('MongoDB connected successfully'))
 .catch((err) => console.error('MongoDB connection error:', err));
 
-// Routes - make sure these are AFTER middleware
+// Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/quiztaker', require('./routes/quiztaker'));
 app.use('/api/quiz', require('./routes/quiz'));
+app.use('/api/questionset', require('./routes/questionset'));
+// NEW: Public routes for regular students (no authentication required)
+app.use('/api/public/quiz', require('./routes/public.js'));
 
 // Test route to verify server is working
 app.get('/', (req, res) => {
