@@ -69,13 +69,13 @@ router.post("/start-session", async (req, res) => {
     // Find or create quiz taker
     let quizTaker = await QuizTaker.findOne({
       email: email.toLowerCase(),
-      accountType: "regular",
+      accountType: "premium",
     });
 
     if (!quizTaker) {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
-        accountType: "regular",
+        accountType: "premium",
         questionSetCombination: questionSetIds,
         isActive: true,
       });
@@ -87,7 +87,7 @@ router.post("/start-session", async (req, res) => {
         if (saveError.code === 11000) {
           quizTaker = await QuizTaker.findOne({
             email: email.toLowerCase().trim(),
-            accountType: "regular",
+            accountType: "premium",
           });
 
           if (!quizTaker) {
