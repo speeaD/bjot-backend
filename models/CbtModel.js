@@ -56,5 +56,4 @@ const CBTSubmissionSchema = new mongoose.Schema({
 CBTSubmissionSchema.virtual('percentageValue').get(function() {
   return this.totalPoints > 0 ? Math.round((this.score / this.totalPoints) * 100) : 0;
 });
-
-const CBTSubmission = mongoose.model('CBTSubmission', CBTSubmissionSchema);
+module.exports = mongoose.model('CBTSubmission', CBTSubmissionSchema);
