@@ -48,6 +48,7 @@ app.use('/api/quiz', require('./routes/quiz'));
 app.use('/api/questionset', require('./routes/questionset'));
 // NEW: Public routes for regular students (no authentication required)
 app.use('/api/public/quiz', require('./routes/public.js'));
+app.use('/api/cbt', require('./routes/cbt'));
 
 // Test route to verify server is working
 app.get('/', (req, res) => {

@@ -183,13 +183,13 @@ router.get("/:quizId/question-set/:questionSetOrder", async (req, res) => {
 // @access  Public
 router.post("/:quizId/submit", async (req, res) => {
   try {
-    const { 
-      email, 
-      name, 
-      questionSetCombination, 
+    const {
+      email,
+      name,
+      questionSetCombination,
       answers = [], // Default to empty array
       timeTaken = 0,
-      submissionType = 'manual' // 'manual', 'timeout', 'focus-loss'
+      submissionType = "manual", // 'manual', 'timeout', 'focus-loss'
     } = req.body;
 
     // Validation - only require email, name, and questionSetCombination
@@ -209,10 +209,14 @@ router.post("/:quizId/submit", async (req, res) => {
       });
     }
 
-    if (!Array.isArray(questionSetCombination) || questionSetCombination.length !== 4) {
+    if (
+      !Array.isArray(questionSetCombination) ||
+      questionSetCombination.length !== 4
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Question set combination must contain exactly 4 question sets",
+        message:
+          "Question set combination must contain exactly 4 question sets",
       });
     }
 
@@ -253,38 +257,60 @@ router.post("/:quizId/submit", async (req, res) => {
       });
     }
 
-    // Find or create quiz taker
     let quizTaker = await QuizTaker.findOne({
       email: email.toLowerCase().trim(),
       accountType: "regular",
     });
 
     if (!quizTaker) {
+      // Create new regular student WITHOUT accessCode
       quizTaker = new QuizTaker({
         accountType: "regular",
         email: email.toLowerCase().trim(),
         name: name.trim(),
         questionSetCombination,
         isActive: true,
+        // DO NOT set accessCode for regular students
       });
-      await quizTaker.save();
+
+      try {
+        await quizTaker.save();
+      } catch (saveError) {
+        // If duplicate key error on email, try to find again
+        if (saveError.code === 11000) {
+          quizTaker = await QuizTaker.findOne({
+            email: email.toLowerCase().trim(),
+            accountType: "regular",
+          });
+
+          if (!quizTaker) {
+            throw new Error("Failed to create or find quiz taker");
+          }
+        } else {
+          throw saveError;
+        }
+      }
     } else {
-      // Update name and question set combination if changed
+      // Update existing quiz taker
       let needsUpdate = false;
-      
+
       if (quizTaker.name !== name.trim()) {
         quizTaker.name = name.trim();
         needsUpdate = true;
       }
-      
-      const currentCombo = JSON.stringify(quizTaker.questionSetCombination.map(id => id.toString()).sort());
-      const newCombo = JSON.stringify(questionSetCombination.map(id => id.toString()).sort());
-      
+
+      const currentCombo = JSON.stringify(
+        quizTaker.questionSetCombination.map((id) => id.toString()).sort()
+      );
+      const newCombo = JSON.stringify(
+        questionSetCombination.map((id) => id.toString()).sort()
+      );
+
       if (currentCombo !== newCombo) {
         quizTaker.questionSetCombination = questionSetCombination;
         needsUpdate = true;
       }
-      
+
       if (needsUpdate) {
         await quizTaker.save();
       }
@@ -300,7 +326,8 @@ router.post("/:quizId/submit", async (req, res) => {
       if (existingSubmission) {
         return res.status(400).json({
           success: false,
-          message: "You have already submitted this quiz. Multiple attempts are not allowed.",
+          message:
+            "You have already submitted this quiz. Multiple attempts are not allowed.",
         });
       }
     }
@@ -337,14 +364,15 @@ router.post("/:quizId/submit", async (req, res) => {
         };
 
         // Check if answer was provided and is not empty
-        const hasAnswer = submittedAnswer !== undefined && 
-                         submittedAnswer !== null && 
-                         submittedAnswer !== "" &&
-                         !(Array.isArray(submittedAnswer) && submittedAnswer.length === 0);
+        const hasAnswer =
+          submittedAnswer !== undefined &&
+          submittedAnswer !== null &&
+          submittedAnswer !== "" &&
+          !(Array.isArray(submittedAnswer) && submittedAnswer.length === 0);
 
         if (hasAnswer) {
           totalQuestionsAnswered++;
-          
+
           // Auto-grade based on question type
           switch (question.type) {
             case "multiple-choice":
@@ -360,7 +388,9 @@ router.post("/:quizId/submit", async (req, res) => {
               }
 
               const correctOption = optionsArray.find((opt) =>
-                String(opt).trim().startsWith(correctOptionLetter + ".")
+                String(opt)
+                  .trim()
+                  .startsWith(correctOptionLetter + ".")
               );
 
               if (submittedAnswer === correctOption) {
@@ -389,7 +419,9 @@ router.post("/:quizId/submit", async (req, res) => {
 
             case "fill-in-the-blanks":
               const submittedAns = String(submittedAnswer).trim().toLowerCase();
-              const correctAns = String(question.correctAnswer).trim().toLowerCase();
+              const correctAns = String(question.correctAnswer)
+                .trim()
+                .toLowerCase();
 
               if (submittedAns === correctAns) {
                 answerObj.isCorrect = true;
@@ -424,12 +456,12 @@ router.post("/:quizId/submit", async (req, res) => {
 
     // Calculate total questions
     const totalQuestions = quiz.questionSets.reduce(
-      (sum, qs) => sum + qs.questions.length, 
+      (sum, qs) => sum + qs.questions.length,
       0
     );
 
     // Calculate start time based on time taken
-    const startedAt = new Date(Date.now() - (timeTaken * 1000));
+    const startedAt = new Date(Date.now() - timeTaken * 1000);
     const submittedAt = new Date();
 
     // Create submission
@@ -479,9 +511,10 @@ router.post("/:quizId/submit", async (req, res) => {
     // Prepare response with submission details
     const responseData = {
       success: true,
-      message: totalQuestionsAnswered === totalQuestions 
-        ? "Quiz submitted successfully" 
-        : "Quiz submitted successfully (partial submission)",
+      message:
+        totalQuestionsAnswered === totalQuestions
+          ? "Quiz submitted successfully"
+          : "Quiz submitted successfully (partial submission)",
       submission: {
         id: submission._id,
         score: submission.score,
@@ -501,7 +534,6 @@ router.post("/:quizId/submit", async (req, res) => {
     }
 
     res.json(responseData);
-
   } catch (error) {
     console.error("Submit quiz error:", error);
     res.status(500).json({

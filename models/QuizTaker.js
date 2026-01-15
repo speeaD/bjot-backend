@@ -34,7 +34,7 @@ const QuestionSetProgressSchema = new mongoose.Schema({
 }, { _id: false });
 
 const QuizTakerSchema = new mongoose.Schema({
-  // NEW: Account type
+  // Account type
   accountType: {
     type: String,
     enum: ['premium', 'regular'],
@@ -42,7 +42,7 @@ const QuizTakerSchema = new mongoose.Schema({
     required: true,
   },
   
-  // NEW: Full name (for regular students)
+  // Full name (for regular students)
   name: {
     type: String,
     trim: true,
@@ -53,11 +53,10 @@ const QuizTakerSchema = new mongoose.Schema({
     required: true,
     lowercase: true,
     trim: true,
-    // Remove unique constraint since regular students might have duplicate emails across attempts
     index: true,
   },
   
-  // NEW: Question set combination (array of 4 question set IDs)
+  // Question set combination (array of 4 question set IDs)
   questionSetCombination: {
     type: [mongoose.Schema.Types.ObjectId],
     ref: 'QuestionSet',
@@ -75,8 +74,8 @@ const QuizTakerSchema = new mongoose.Schema({
     required: function() {
       return this.accountType === 'premium';
     },
-    sparse: true, // Allows null values and only enforces uniqueness on non-null values
-    unique: true,
+    // NOTE: Index will be created manually with sparse option
+    // Do NOT use unique: true here as it causes issues with null values
   },
   
   isActive: {
@@ -148,6 +147,10 @@ const QuizTakerSchema = new mongoose.Schema({
 // Create compound index for regular students (email + accountType)
 QuizTakerSchema.index({ email: 1, accountType: 1 });
 
+// Create sparse unique index on accessCode
+// This allows multiple null values but ensures non-null values are unique
+QuizTakerSchema.index({ accessCode: 1 }, { unique: true, sparse: true });
+
 // Generate unique 9-digit alphanumeric access code (only for premium)
 QuizTakerSchema.statics.generateAccessCode = function() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -181,14 +184,13 @@ QuizTakerSchema.methods.initializeQuestionSetProgress = function(quizId) {
 // Validation: Premium students must have access codes
 QuizTakerSchema.pre('save', function() {
   if (this.accountType === 'premium' && !this.accessCode) {
-    return (new Error('Premium students must have an access code'));
+    throw new Error('Premium students must have an access code');
   }
   
   // Regular students shouldn't have assigned quizzes
   if (this.accountType === 'regular' && this.assignedQuizzes && this.assignedQuizzes.length > 0) {
-    return (new Error('Regular students cannot have assigned quizzes'));
+    throw new Error('Regular students cannot have assigned quizzes');
   }
-  return;
 });
 
 module.exports = mongoose.model('QuizTaker', QuizTakerSchema);

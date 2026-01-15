@@ -1,0 +1,308 @@
+const express = require("express");
+const router = express.Router();
+const QuestionSet = require("../models/QuestionSet");
+const QuizTaker = require("../models/QuizTaker");
+const CBTSubmission = require("../models/CbtModel");
+const mongoose = require('mongoose');
+
+// @route   GET /api/cbt/question-sets
+// @desc    Get all active question sets (subjects) for selection
+// @access  Public or with optional auth
+router.get('/question-sets', async (req, res) => {
+  try {
+    const questionSets = await QuestionSet.find({ isActive: true })
+      .select('title questionCount totalPoints')
+      .sort({ title: 1 });
+
+    res.json({
+      success: true,
+      count: questionSets.length,
+      questionSets,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   POST /api/cbt/start-session
+// @desc    Start a new CBT session with selected question sets
+// @access  Public or with optional auth
+router.post('/start-session', async (req, res) => {
+  try {
+    const { questionSetIds, email } = req.body;
+
+    if (!questionSetIds || !Array.isArray(questionSetIds) || questionSetIds.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select exactly 4 question sets',
+      });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    // Verify all question sets exist and are active
+    const questionSets = await QuestionSet.find({
+      _id: { $in: questionSetIds },
+      isActive: true,
+    });
+
+    if (questionSets.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'One or more selected question sets are invalid or inactive',
+      });
+    }
+
+    // Find or create quiz taker
+    let quizTaker = await QuizTaker.findOne({ 
+      email: email.toLowerCase(),
+      accountType: 'regular'
+    });
+
+    if (!quizTaker) {
+      quizTaker = new QuizTaker({
+        email: email.toLowerCase(),
+        accountType: 'regular',
+        questionSetCombination: questionSetIds,
+      });
+      await quizTaker.save();
+    } else {
+      quizTaker.questionSetCombination = questionSetIds;
+      await quizTaker.save();
+    }
+
+    // Create session data
+    const sessionData = {
+      sessionId: new mongoose.Types.ObjectId().toString(),
+      quizTakerId: quizTaker._id,
+      questionSets: questionSets.map((qs, index) => ({
+        questionSetId: qs._id,
+        title: qs.title,
+        order: index + 1,
+        questionCount: qs.questionCount,
+        totalPoints: qs.totalPoints,
+      })),
+      startedAt: new Date(),
+    };
+
+    res.json({
+      success: true,
+      message: 'CBT session started successfully',
+      session: sessionData,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   GET /api/cbt/question-set/:id/questions
+// @desc    Get questions for a specific question set (without answers)
+// @access  Public
+router.get('/question-set/:id/questions', async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set is not active',
+      });
+    }
+
+    // Remove correct answers from questions
+    const questionsWithoutAnswers = questionSet.questions.map((q) => ({
+      _id: q._id,
+      type: q.type,
+      question: q.question,
+      options: q.options,
+      points: q.points,
+      order: q.order,
+    }));
+
+    res.json({
+      success: true,
+      questionSet: {
+        _id: questionSet._id,
+        title: questionSet.title,
+        totalPoints: questionSet.totalPoints,
+        questionCount: questionSet.questionCount,
+        questions: questionsWithoutAnswers,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   POST /api/cbt/submit
+// @desc    Submit CBT answers
+// @access  Public
+router.post('/submit', async (req, res) => {
+  try {
+    const { sessionId, quizTakerId, answers, questionSetIds, startedAt } = req.body;
+
+    if (!answers || !Array.isArray(answers)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Answers are required',
+      });
+    }
+
+    if (!questionSetIds || questionSetIds.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid question sets',
+      });
+    }
+
+    // Fetch all question sets with answers
+    const questionSets = await QuestionSet.find({
+      _id: { $in: questionSetIds },
+    });
+
+    // Grade the answers
+    const gradedAnswers = [];
+    let totalScore = 0;
+    let totalPoints = 0;
+
+    questionSets.forEach((questionSet) => {
+      totalPoints += questionSet.totalPoints;
+
+      questionSet.questions.forEach((question) => {
+        const submittedAnswer = answers.find(
+          (ans) => ans.questionId === question._id.toString()
+        );
+
+        if (!submittedAnswer) return;
+
+        const answerObj = {
+          questionId: question._id,
+          questionSetId: questionSet._id,
+          answer: submittedAnswer.answer,
+          pointsPossible: question.points,
+          pointsAwarded: 0,
+          isCorrect: false,
+        };
+
+        // Grade based on question type
+        switch (question.type) {
+          case 'multiple-choice':
+            const correctOption = question.options.find((opt) =>
+              opt.trim().startsWith(question.correctAnswer + '.')
+            );
+            if (submittedAnswer.answer === correctOption) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              totalScore += question.points;
+            }
+            break;
+
+          case 'true-false':
+            if (
+              String(submittedAnswer.answer).toLowerCase() ===
+              String(question.correctAnswer).toLowerCase()
+            ) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              totalScore += question.points;
+            }
+            break;
+
+          case 'fill-in-the-blanks':
+            const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
+            const correctAns = String(question.correctAnswer).trim().toLowerCase();
+            if (submittedAns === correctAns) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              totalScore += question.points;
+            }
+            break;
+
+          case 'essay':
+            // Essays need manual grading
+            answerObj.isCorrect = null;
+            break;
+        }
+
+        gradedAnswers.push(answerObj);
+      });
+    });
+
+    // Create submission record
+    const submission = new CBTSubmission({
+      quizTakerId,
+      questionSets: questionSets.map((qs, index) => ({
+        questionSetId: qs._id,
+        title: qs.title,
+        order: index + 1,
+      })),
+      answers: gradedAnswers,
+      score: totalScore,
+      totalPoints,
+      percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+      startedAt: new Date(startedAt),
+      submittedAt: new Date(),
+      timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+    });
+
+    await submission.save();
+
+    // Update quiz taker's record
+    if (quizTakerId) {
+      await QuizTaker.findByIdAndUpdate(quizTakerId, {
+        $push: {
+          quizzesTaken: {
+            score: totalScore,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'CBT submitted successfully',
+      submission: {
+        id: submission._id,
+        score: submission.score,
+        totalPoints: submission.totalPoints,
+        percentage: submission.percentage,
+        timeTaken: submission.timeTaken,
+        submittedAt: submission.submittedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Submit error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+module.exports = router;
