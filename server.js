@@ -34,12 +34,20 @@ app.set('upload', upload);
 // Middleware 
 app.use(cors());
 app.use(express.json());
-
+const connectDB = async () => {
+  try{
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected successfully');
+  }catch(err){
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+}
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('MongoDB connected successfully'))
-.catch((err) => console.error('MongoDB connection error:', err));
-
+connectDB();
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
