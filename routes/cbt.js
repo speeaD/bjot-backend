@@ -3,15 +3,15 @@ const router = express.Router();
 const QuestionSet = require("../models/QuestionSet");
 const QuizTaker = require("../models/QuizTaker");
 const CBTSubmission = require("../models/CbtModel");
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 // @route   GET /api/cbt/question-sets
 // @desc    Get all active question sets (subjects) for selection
 // @access  Public or with optional auth
-router.get('/question-sets', async (req, res) => {
+router.get("/question-sets", async (req, res) => {
   try {
     const questionSets = await QuestionSet.find({ isActive: true })
-      .select('title questionCount totalPoints')
+      .select("title questionCount totalPoints")
       .sort({ title: 1 });
 
     res.json({
@@ -22,7 +22,7 @@ router.get('/question-sets', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -31,21 +31,25 @@ router.get('/question-sets', async (req, res) => {
 // @route   POST /api/cbt/start-session
 // @desc    Start a new CBT session with selected question sets
 // @access  Public or with optional auth
-router.post('/start-session', async (req, res) => {
+router.post("/start-session", async (req, res) => {
   try {
     const { questionSetIds, email } = req.body;
 
-    if (!questionSetIds || !Array.isArray(questionSetIds) || questionSetIds.length !== 4) {
+    if (
+      !questionSetIds ||
+      !Array.isArray(questionSetIds) ||
+      questionSetIds.length !== 4
+    ) {
       return res.status(400).json({
         success: false,
-        message: 'Please select exactly 4 question sets',
+        message: "Please select exactly 4 question sets",
       });
     }
 
     if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Email is required',
+        message: "Email is required",
       });
     }
 
@@ -58,26 +62,60 @@ router.post('/start-session', async (req, res) => {
     if (questionSets.length !== 4) {
       return res.status(400).json({
         success: false,
-        message: 'One or more selected question sets are invalid or inactive',
+        message: "One or more selected question sets are invalid or inactive",
       });
     }
 
     // Find or create quiz taker
-    let quizTaker = await QuizTaker.findOne({ 
+    let quizTaker = await QuizTaker.findOne({
       email: email.toLowerCase(),
-      accountType: 'regular'
+      accountType: "regular",
     });
 
     if (!quizTaker) {
       quizTaker = new QuizTaker({
-        email: email.toLowerCase(),
-        accountType: 'regular',
+        email: email.toLowerCase().trim(),
+        accountType: "regular",
         questionSetCombination: questionSetIds,
+        isActive: true,
       });
-      await quizTaker.save();
+
+      try {
+        await quizTaker.save();
+      } catch (saveError) {
+        // If duplicate key error on email, try to find again
+        if (saveError.code === 11000) {
+          quizTaker = await QuizTaker.findOne({
+            email: email.toLowerCase().trim(),
+            accountType: "regular",
+          });
+
+          if (!quizTaker) {
+            throw new Error("Failed to create or find quiz taker");
+          }
+        } else {
+          throw saveError;
+        }
+      }
     } else {
-      quizTaker.questionSetCombination = questionSetIds;
-      await quizTaker.save();
+      // Update existing quiz taker
+      let needsUpdate = false;
+
+      const currentCombo = JSON.stringify(
+        quizTaker.questionSetCombination.map((id) => id.toString()).sort()
+      );
+      const newCombo = JSON.stringify(
+        questionSetIds.map((id) => id.toString()).sort()
+      );
+
+      if (currentCombo !== newCombo) {
+        quizTaker.questionSetCombination = questionSetIds;
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        await quizTaker.save();
+      }
     }
 
     // Create session data
@@ -96,13 +134,13 @@ router.post('/start-session', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'CBT session started successfully',
+      message: "CBT session started successfully",
       session: sessionData,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -111,21 +149,21 @@ router.post('/start-session', async (req, res) => {
 // @route   GET /api/cbt/question-set/:id/questions
 // @desc    Get questions for a specific question set (without answers)
 // @access  Public
-router.get('/question-set/:id/questions', async (req, res) => {
+router.get("/question-set/:id/questions", async (req, res) => {
   try {
     const questionSet = await QuestionSet.findById(req.params.id);
 
     if (!questionSet) {
       return res.status(404).json({
         success: false,
-        message: 'Question set not found',
+        message: "Question set not found",
       });
     }
 
     if (!questionSet.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'This question set is not active',
+        message: "This question set is not active",
       });
     }
 
@@ -152,7 +190,7 @@ router.get('/question-set/:id/questions', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -161,21 +199,22 @@ router.get('/question-set/:id/questions', async (req, res) => {
 // @route   POST /api/cbt/submit
 // @desc    Submit CBT answers
 // @access  Public
-router.post('/submit', async (req, res) => {
+router.post("/submit", async (req, res) => {
   try {
-    const { sessionId, quizTakerId, answers, questionSetIds, startedAt } = req.body;
+    const { sessionId, quizTakerId, answers, questionSetIds, startedAt } =
+      req.body;
 
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({
         success: false,
-        message: 'Answers are required',
+        message: "Answers are required",
       });
     }
 
     if (!questionSetIds || questionSetIds.length !== 4) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid question sets',
+        message: "Invalid question sets",
       });
     }
 
@@ -210,9 +249,9 @@ router.post('/submit', async (req, res) => {
 
         // Grade based on question type
         switch (question.type) {
-          case 'multiple-choice':
+          case "multiple-choice":
             const correctOption = question.options.find((opt) =>
-              opt.trim().startsWith(question.correctAnswer + '.')
+              opt.trim().startsWith(question.correctAnswer + ".")
             );
             if (submittedAnswer.answer === correctOption) {
               answerObj.isCorrect = true;
@@ -221,7 +260,7 @@ router.post('/submit', async (req, res) => {
             }
             break;
 
-          case 'true-false':
+          case "true-false":
             if (
               String(submittedAnswer.answer).toLowerCase() ===
               String(question.correctAnswer).toLowerCase()
@@ -232,9 +271,13 @@ router.post('/submit', async (req, res) => {
             }
             break;
 
-          case 'fill-in-the-blanks':
-            const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-            const correctAns = String(question.correctAnswer).trim().toLowerCase();
+          case "fill-in-the-blanks":
+            const submittedAns = String(submittedAnswer.answer)
+              .trim()
+              .toLowerCase();
+            const correctAns = String(question.correctAnswer)
+              .trim()
+              .toLowerCase();
             if (submittedAns === correctAns) {
               answerObj.isCorrect = true;
               answerObj.pointsAwarded = question.points;
@@ -242,7 +285,7 @@ router.post('/submit', async (req, res) => {
             }
             break;
 
-          case 'essay':
+          case "essay":
             // Essays need manual grading
             answerObj.isCorrect = null;
             break;
@@ -263,7 +306,8 @@ router.post('/submit', async (req, res) => {
       answers: gradedAnswers,
       score: totalScore,
       totalPoints,
-      percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+      percentage:
+        totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
       startedAt: new Date(startedAt),
       submittedAt: new Date(),
       timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
@@ -285,7 +329,7 @@ router.post('/submit', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'CBT submitted successfully',
+      message: "CBT submitted successfully",
       submission: {
         id: submission._id,
         score: submission.score,
@@ -296,10 +340,10 @@ router.post('/submit', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Submit error:', error);
+    console.error("Submit error:", error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
