@@ -201,8 +201,7 @@ router.get("/question-set/:id/questions", async (req, res) => {
 // @access  Public
 router.post("/submit", async (req, res) => {
   try {
-    const { sessionId, quizTakerId, answers, questionSetIds, startedAt } =
-      req.body;
+    const { quizTakerId, answers, questionSetIds, startedAt } = req.body;
 
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({
@@ -321,6 +320,19 @@ router.post("/submit", async (req, res) => {
         $push: {
           quizzesTaken: {
             score: totalScore,
+            totalPoints: totalPoints,
+            percentage:
+              totalPoints > 0
+                ? Math.round((totalScore / totalPoints) * 100)
+                : 0,
+            timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+            examType: "multi-subject", // or 'multi-subject'
+            questionSets: [
+              {
+                questionSetId: questionSet._id,
+                title: questionSet.title,
+              },
+            ],
             completedAt: new Date(),
           },
         },
@@ -351,21 +363,21 @@ router.post("/submit", async (req, res) => {
 // @route   POST /api/cbt/start-single-subject
 // @desc    Start a single subject exam
 // @access  Public
-router.post('/start-single-subject', async (req, res) => {
+router.post("/start-single-subject", async (req, res) => {
   try {
     const { questionSetId, email } = req.body;
 
     if (!questionSetId) {
       return res.status(400).json({
         success: false,
-        message: 'Please select a question set',
+        message: "Please select a question set",
       });
     }
 
     if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Email is required',
+        message: "Email is required",
       });
     }
 
@@ -375,11 +387,11 @@ router.post('/start-single-subject', async (req, res) => {
     if (!questionSet || !questionSet.isActive) {
       return res.status(400).json({
         success: false,
-        message: 'Question set is invalid or inactive',
+        message: "Question set is invalid or inactive",
       });
     }
 
-   let quizTaker = await QuizTaker.findOne({
+    let quizTaker = await QuizTaker.findOne({
       email: email.toLowerCase(),
       accountType: "premium",
     });
@@ -415,7 +427,7 @@ router.post('/start-single-subject', async (req, res) => {
     const sessionData = {
       sessionId: new mongoose.Types.ObjectId().toString(),
       quizTakerId: quizTaker._id,
-      examType: 'single-subject',
+      examType: "single-subject",
       questionSet: {
         questionSetId: questionSet._id,
         title: questionSet.title,
@@ -427,13 +439,13 @@ router.post('/start-single-subject', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Single subject exam started successfully',
+      message: "Single subject exam started successfully",
       session: sessionData,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }
@@ -442,21 +454,22 @@ router.post('/start-single-subject', async (req, res) => {
 // @route   POST /api/cbt/submit-single-subject
 // @desc    Submit single subject exam answers
 // @access  Public
-router.post('/submit-single-subject', async (req, res) => {
+router.post("/submit-single-subject", async (req, res) => {
   try {
-    const { sessionId, quizTakerId, answers, questionSetId, startedAt } = req.body;
+    const { sessionId, quizTakerId, answers, questionSetId, startedAt } =
+      req.body;
 
     if (!answers || !Array.isArray(answers)) {
       return res.status(400).json({
         success: false,
-        message: 'Answers are required',
+        message: "Answers are required",
       });
     }
 
     if (!questionSetId) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid question set',
+        message: "Invalid question set",
       });
     }
 
@@ -466,7 +479,7 @@ router.post('/submit-single-subject', async (req, res) => {
     if (!questionSet) {
       return res.status(404).json({
         success: false,
-        message: 'Question set not found',
+        message: "Question set not found",
       });
     }
 
@@ -493,9 +506,9 @@ router.post('/submit-single-subject', async (req, res) => {
 
       // Grade based on question type
       switch (question.type) {
-        case 'multiple-choice':
+        case "multiple-choice":
           const correctOption = question.options.find((opt) =>
-            opt.trim().startsWith(question.correctAnswer + '.')
+            opt.trim().startsWith(question.correctAnswer + ".")
           );
           if (submittedAnswer.answer === correctOption) {
             answerObj.isCorrect = true;
@@ -504,7 +517,7 @@ router.post('/submit-single-subject', async (req, res) => {
           }
           break;
 
-        case 'true-false':
+        case "true-false":
           if (
             String(submittedAnswer.answer).toLowerCase() ===
             String(question.correctAnswer).toLowerCase()
@@ -515,9 +528,13 @@ router.post('/submit-single-subject', async (req, res) => {
           }
           break;
 
-        case 'fill-in-the-blanks':
-          const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-          const correctAns = String(question.correctAnswer).trim().toLowerCase();
+        case "fill-in-the-blanks":
+          const submittedAns = String(submittedAnswer.answer)
+            .trim()
+            .toLowerCase();
+          const correctAns = String(question.correctAnswer)
+            .trim()
+            .toLowerCase();
           if (submittedAns === correctAns) {
             answerObj.isCorrect = true;
             answerObj.pointsAwarded = question.points;
@@ -525,7 +542,7 @@ router.post('/submit-single-subject', async (req, res) => {
           }
           break;
 
-        case 'essay':
+        case "essay":
           answerObj.isCorrect = null;
           break;
       }
@@ -536,16 +553,19 @@ router.post('/submit-single-subject', async (req, res) => {
     // Create submission record
     const submission = new CBTSubmission({
       quizTakerId,
-      examType: 'single-subject',
-      questionSets: [{
-        questionSetId: questionSet._id,
-        title: questionSet.title,
-        order: 1,
-      }],
+      examType: "single-subject",
+      questionSets: [
+        {
+          questionSetId: questionSet._id,
+          title: questionSet.title,
+          order: 1,
+        },
+      ],
       answers: gradedAnswers,
       score: totalScore,
       totalPoints,
-      percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+      percentage:
+        totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
       startedAt: new Date(startedAt),
       submittedAt: new Date(),
       timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
@@ -559,6 +579,19 @@ router.post('/submit-single-subject', async (req, res) => {
         $push: {
           quizzesTaken: {
             score: totalScore,
+            totalPoints: totalPoints,
+            percentage:
+              totalPoints > 0
+                ? Math.round((totalScore / totalPoints) * 100)
+                : 0,
+            timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+            examType: "single-subject", // or 'multi-subject'
+            questionSets: [
+              {
+                questionSetId: questionSet._id,
+                title: questionSet.title,
+              },
+            ],
             completedAt: new Date(),
           },
         },
@@ -567,7 +600,7 @@ router.post('/submit-single-subject', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Single subject exam submitted successfully',
+      message: "Single subject exam submitted successfully",
       submission: {
         id: submission._id,
         score: submission.score,
@@ -578,10 +611,10 @@ router.post('/submit-single-subject', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Submit error:', error);
+    console.error("Submit error:", error);
     res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }

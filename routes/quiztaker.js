@@ -943,27 +943,41 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
 });
 
 // @route   GET /api/quiztaker/my-submissions
-// @desc    Get all submissions by this quiz taker
+// @desc    Get all submissions from quizzesTaken array
 // @access  Private (Quiz taker only)
 router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
   try {
-    const submissions = await QuizSubmission.find({
-      quizTakerId: req.quizTaker._id,
-    })
-      .populate("quizId", "settings.title settings.isQuizChallenge")
-      .sort({ submittedAt: -1 });
+    const quizTaker = await QuizTaker.findById(req.quizTaker._id)
+      .select('quizzesTaken')
+      .populate({
+        path: 'quizzesTaken.quizId',
+        select: 'settings.title settings.isQuizChallenge'
+      });
+
+    if (!quizTaker) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz taker not found",
+      });
+    }
+
+    // Sort by completedAt (most recent first)
+    const sortedQuizzes = quizTaker.quizzesTaken
+      .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
 
     res.json({
       success: true,
-      count: submissions.length,
-      submissions: submissions.map((sub) => ({
-        id: sub._id,
-        quizTitle: sub.quizId.settings.title,
-        score: sub.score,
-        totalPoints: sub.totalPoints,
-        percentage: sub.percentage,
-        submittedAt: sub.submittedAt,
-        status: sub.status,
+      count: sortedQuizzes.length,
+      submissions: sortedQuizzes.map((quiz) => ({
+        id: quiz._id,
+        quizId: quiz.quizId?._id,
+        quizTitle: quiz.quizId?.settings?.title || 'CBT Exam',
+        score: quiz.score || 0,
+        totalPoints: quiz.totalPoints || 0,
+        percentage: quiz.totalPoints > 0 
+          ? Math.round((quiz.score / quiz.totalPoints) * 100) 
+          : 0,
+        completedAt: quiz.completedAt,
       })),
     });
   } catch (error) {

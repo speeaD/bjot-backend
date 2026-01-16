@@ -84,13 +84,42 @@ const QuizTakerSchema = new mongoose.Schema({
   },
   
   quizzesTaken: [{
-    quizId: {
+  quizId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Quiz',
+  },
+  score: {
+    type: Number,
+    default: 0,
+  },
+  totalPoints: {
+    type: Number,
+    default: 0,
+  },
+  percentage: {
+    type: Number,
+    default: 0,
+  },
+  timeTaken: {
+    type: Number, // in seconds
+    default: 0,
+  },
+  examType: {
+    type: String,
+    enum: ['single-subject', 'multi-subject'],
+  },
+  questionSets: [{
+    questionSetId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Quiz',
+      ref: 'QuestionSet',
     },
-    score: Number,
-    completedAt: Date,
+    title: String,
   }],
+  completedAt: {
+    type: Date,
+    default: Date.now,
+  },
+}],
   
   // Only for premium students
   assignedQuizzes: [{
