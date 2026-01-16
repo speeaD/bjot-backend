@@ -348,5 +348,243 @@ router.post("/submit", async (req, res) => {
     });
   }
 });
+// @route   POST /api/cbt/start-single-subject
+// @desc    Start a single subject exam
+// @access  Public
+router.post('/start-single-subject', async (req, res) => {
+  try {
+    const { questionSetId, email } = req.body;
+
+    if (!questionSetId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select a question set',
+      });
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    // Verify question set exists and is active
+    const questionSet = await QuestionSet.findById(questionSetId);
+
+    if (!questionSet || !questionSet.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Question set is invalid or inactive',
+      });
+    }
+
+   let quizTaker = await QuizTaker.findOne({
+      email: email.toLowerCase(),
+      accountType: "premium",
+    });
+
+    if (!quizTaker) {
+      quizTaker = new QuizTaker({
+        email: email.toLowerCase().trim(),
+        accountType: "premium",
+        questionSetCombination: questionSetIds,
+        isActive: true,
+      });
+
+      try {
+        await quizTaker.save();
+      } catch (saveError) {
+        // If duplicate key error on email, try to find again
+        if (saveError.code === 11000) {
+          quizTaker = await QuizTaker.findOne({
+            email: email.toLowerCase().trim(),
+            accountType: "premium",
+          });
+
+          if (!quizTaker) {
+            throw new Error("Failed to create or find quiz taker");
+          }
+        } else {
+          throw saveError;
+        }
+      }
+    }
+
+    // Create session data
+    const sessionData = {
+      sessionId: new mongoose.Types.ObjectId().toString(),
+      quizTakerId: quizTaker._id,
+      examType: 'single-subject',
+      questionSet: {
+        questionSetId: questionSet._id,
+        title: questionSet.title,
+        questionCount: questionSet.questionCount,
+        totalPoints: questionSet.totalPoints,
+      },
+      startedAt: new Date(),
+    };
+
+    res.json({
+      success: true,
+      message: 'Single subject exam started successfully',
+      session: sessionData,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   POST /api/cbt/submit-single-subject
+// @desc    Submit single subject exam answers
+// @access  Public
+router.post('/submit-single-subject', async (req, res) => {
+  try {
+    const { sessionId, quizTakerId, answers, questionSetId, startedAt } = req.body;
+
+    if (!answers || !Array.isArray(answers)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Answers are required',
+      });
+    }
+
+    if (!questionSetId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid question set',
+      });
+    }
+
+    // Fetch question set with answers
+    const questionSet = await QuestionSet.findById(questionSetId);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    // Grade the answers
+    const gradedAnswers = [];
+    let totalScore = 0;
+    const totalPoints = questionSet.totalPoints;
+
+    questionSet.questions.forEach((question) => {
+      const submittedAnswer = answers.find(
+        (ans) => ans.questionId === question._id.toString()
+      );
+
+      if (!submittedAnswer) return;
+
+      const answerObj = {
+        questionId: question._id,
+        questionSetId: questionSet._id,
+        answer: submittedAnswer.answer,
+        pointsPossible: question.points,
+        pointsAwarded: 0,
+        isCorrect: false,
+      };
+
+      // Grade based on question type
+      switch (question.type) {
+        case 'multiple-choice':
+          const correctOption = question.options.find((opt) =>
+            opt.trim().startsWith(question.correctAnswer + '.')
+          );
+          if (submittedAnswer.answer === correctOption) {
+            answerObj.isCorrect = true;
+            answerObj.pointsAwarded = question.points;
+            totalScore += question.points;
+          }
+          break;
+
+        case 'true-false':
+          if (
+            String(submittedAnswer.answer).toLowerCase() ===
+            String(question.correctAnswer).toLowerCase()
+          ) {
+            answerObj.isCorrect = true;
+            answerObj.pointsAwarded = question.points;
+            totalScore += question.points;
+          }
+          break;
+
+        case 'fill-in-the-blanks':
+          const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
+          const correctAns = String(question.correctAnswer).trim().toLowerCase();
+          if (submittedAns === correctAns) {
+            answerObj.isCorrect = true;
+            answerObj.pointsAwarded = question.points;
+            totalScore += question.points;
+          }
+          break;
+
+        case 'essay':
+          answerObj.isCorrect = null;
+          break;
+      }
+
+      gradedAnswers.push(answerObj);
+    });
+
+    // Create submission record
+    const submission = new CBTSubmission({
+      quizTakerId,
+      examType: 'single-subject',
+      questionSets: [{
+        questionSetId: questionSet._id,
+        title: questionSet.title,
+        order: 1,
+      }],
+      answers: gradedAnswers,
+      score: totalScore,
+      totalPoints,
+      percentage: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+      startedAt: new Date(startedAt),
+      submittedAt: new Date(),
+      timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+    });
+
+    await submission.save();
+
+    // Update quiz taker's record
+    if (quizTakerId) {
+      await QuizTaker.findByIdAndUpdate(quizTakerId, {
+        $push: {
+          quizzesTaken: {
+            score: totalScore,
+            completedAt: new Date(),
+          },
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Single subject exam submitted successfully',
+      submission: {
+        id: submission._id,
+        score: submission.score,
+        totalPoints: submission.totalPoints,
+        percentage: submission.percentage,
+        timeTaken: submission.timeTaken,
+        submittedAt: submission.submittedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Submit error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
 
 module.exports = router;
