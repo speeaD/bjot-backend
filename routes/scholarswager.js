@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { verifyToken } = require('../middleware/auth'); // Your auth middleware
+const { verifyQuizTaker } = require('../middleware/auth'); // Your auth middleware
 const GameSession = require('../models/GameSession');
 const QuestionSet = require('../models/QuestionSet');
 
 // @route   GET /api/scholars-wager/subjects
 // @desc    Get all available subjects (question sets)
 // @access  Private
-router.get('/subjects', verifyToken, async (req, res) => {
+router.get('/subjects', verifyQuizTaker, async (req, res) => {
   try {
     const questionSets = await QuestionSet.find({ 
       isActive: true,
@@ -39,7 +39,7 @@ router.get('/subjects', verifyToken, async (req, res) => {
 // @route   POST /api/scholars-wager/start
 // @desc    Start a new game session
 // @access  Private
-router.post('/start', verifyToken, async (req, res) => {
+router.post('/start', verifyQuizTaker, async (req, res) => {
   try {
     const { questionSetId } = req.body;
 
@@ -119,7 +119,7 @@ router.post('/start', verifyToken, async (req, res) => {
 // @route   GET /api/scholars-wager/session/:sessionId/question
 // @desc    Get next question for the game
 // @access  Private
-router.get('/session/:sessionId/question', verifyToken, async (req, res) => {
+router.get('/session/:sessionId/question', verifyQuizTaker, async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
@@ -198,7 +198,7 @@ router.get('/session/:sessionId/question', verifyToken, async (req, res) => {
 // @route   POST /api/scholars-wager/session/:sessionId/answer
 // @desc    Submit answer with wager
 // @access  Private
-router.post('/session/:sessionId/answer', verifyToken, async (req, res) => {
+router.post('/session/:sessionId/answer', verifyQuizTaker, async (req, res) => {
   try {
     const { questionId, selectedAnswer, wager } = req.body;
 
@@ -327,7 +327,7 @@ router.post('/session/:sessionId/answer', verifyToken, async (req, res) => {
 // @route   GET /api/scholars-wager/session/:sessionId
 // @desc    Get current session details
 // @access  Private
-router.get('/session/:sessionId', verifyToken, async (req, res) => {
+router.get('/session/:sessionId', verifyQuizTaker, async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
@@ -357,7 +357,7 @@ router.get('/session/:sessionId', verifyToken, async (req, res) => {
 // @route   POST /api/scholars-wager/session/:sessionId/quit
 // @desc    Quit/abandon current game
 // @access  Private
-router.post('/session/:sessionId/quit', verifyToken, async (req, res) => {
+router.post('/session/:sessionId/quit', verifyQuizTaker, async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
@@ -392,7 +392,7 @@ router.post('/session/:sessionId/quit', verifyToken, async (req, res) => {
 // @route   GET /api/scholars-wager/leaderboard
 // @desc    Get leaderboard
 // @access  Private
-router.get('/leaderboard', verifyToken, async (req, res) => {
+router.get('/leaderboard', verifyQuizTaker, async (req, res) => {
   try {
     const { limit = 10, subject } = req.query;
 
@@ -428,7 +428,7 @@ router.get('/leaderboard', verifyToken, async (req, res) => {
 // @route   GET /api/scholars-wager/history
 // @desc    Get user's game history
 // @access  Private
-router.get('/history', verifyToken, async (req, res) => {
+router.get('/history', verifyQuizTaker, async (req, res) => {
   try {
     const { limit = 10, status } = req.query;
 
