@@ -124,7 +124,6 @@ router.get('/session/:sessionId/question', async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.params.userId,
     });
 
     if (!gameSession) {
