@@ -124,7 +124,7 @@ router.get('/session/:sessionId/question', async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.user._id,
+      userId: req.userId,
     });
 
     if (!gameSession) {
@@ -201,7 +201,7 @@ router.get('/session/:sessionId/question', async (req, res) => {
 // @access  Private
 router.post('/session/:sessionId/answer', async (req, res) => {
   try {
-    const { questionId, selectedAnswer, wager } = req.body;
+    const { questionId, selectedAnswer, wager, userId } = req.body;
 
     // Validation
     if (!questionId || selectedAnswer === undefined || !wager) {
@@ -220,7 +220,7 @@ router.post('/session/:sessionId/answer', async (req, res) => {
 
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.user._id,
+      userId: userId,
     });
 
     if (!gameSession) {
@@ -332,7 +332,7 @@ router.get('/session/:sessionId', async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.user._id,
+      userId: req.userId,
     });
 
     if (!gameSession) {
@@ -362,7 +362,7 @@ router.post('/session/:sessionId/quit', async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.user._id,
+      userId: req.userId,
       status: 'active',
     });
 
