@@ -42,7 +42,7 @@ router.get('/subjects', async (req, res) => {
 // @access  Private
 router.post('/start', async (req, res) => {
   try {
-    const { questionSetId } = req.body;
+    const { questionSetId, userId } = req.body;
 
     if (!questionSetId) {
       return res.status(400).json({
@@ -75,7 +75,7 @@ router.post('/start', async (req, res) => {
 
     // Check if user has an active session
     const existingSession = await GameSession.findOne({
-      userId: req.user._id,
+      userId: userId,
       status: 'active',
       gameType: 'scholars-wager',
     });
@@ -90,7 +90,7 @@ router.post('/start', async (req, res) => {
 
     // Create new game session
     const gameSession = new GameSession({
-      userId: req.user._id,
+      userId: userId,
       questionSetId: questionSet._id,
       subject: questionSet.title,
     });
