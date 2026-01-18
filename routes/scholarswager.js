@@ -219,7 +219,6 @@ router.post('/session/:sessionId/answer', async (req, res) => {
 
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: userId,
     });
 
     if (!gameSession) {
@@ -331,7 +330,6 @@ router.get('/session/:sessionId', async (req, res) => {
   try {
     const gameSession = await GameSession.findOne({
       _id: req.params.sessionId,
-      userId: req.params.userId,
     });
 
     if (!gameSession) {
