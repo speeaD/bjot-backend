@@ -50,7 +50,7 @@ app.use('/api/questionset', require('./routes/questionset'));
 // NEW: Public routes for regular students (no authentication required)
 app.use('/api/public/quiz', require('./routes/public.js'));
 app.use('/api/cbt', require('./routes/cbt.js'));
-app.use('/api/game/scholars-wager', scholarsWagerRoutes);
+app.use('/api/game/scholars-wager', require('./routes/scholarswager.js'));
 
 // Test route to verify server is working
 app.get('/', (req, res) => {
