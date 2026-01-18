@@ -452,3 +452,5 @@ router.get('/history', verifyQuizTaker, async (req, res) => {
     });
   }
 });
+
+module.exports = router;
