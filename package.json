@@ -18,6 +18,7 @@
     "mongoose": "^9.0.0",
     "multer": "^2.0.2",
     "node-xlsx": "^0.24.0",
+    "nodemailer": "^7.0.12",
     "papaparse": "^5.5.3"
   },
   "devDependencies": {

@@ -3,10 +3,271 @@ const router = express.Router();
 const { verifyAdmin } = require('../middleware/auth');
 const QuizTaker = require('../models/QuizTaker');
 const Quiz = require('../models/Quiz');
+const multer = require('multer');
+const XLSX = require('node-xlsx');
+const { sendAccessCodeEmail } = require('../utils/emailService');
 
 // @route   POST /api/admin/quiztaker
 // @desc    Create a new PREMIUM quiz taker
 // @access  Private (Admin only)
+// Configure multer for file upload
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only CSV and Excel files are allowed.'));
+    }
+  }
+});
+
+// @route   POST /api/admin/bulk-upload-quiztakers
+// @desc    Bulk upload quiz takers from CSV/Excel file
+// @access  Private (Admin only)
+router.post('/bulk-upload-quiztakers', verifyAdmin, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload a CSV or Excel file',
+      });
+    }
+
+    // Parse the uploaded file
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'File is empty or invalid format',
+      });
+    }
+
+    const results = {
+      total: data.length,
+      successful: [],
+      failed: [],
+    };
+
+    const QuestionSet = require('../models/QuestionSet');
+
+    // Process each row
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNumber = i + 2; // +2 because row 1 is header, and arrays are 0-indexed
+
+      try {
+        // Validate required fields
+        const email = row.email?.toString().trim().toLowerCase();
+        const accountType = row.accountType?.toString().trim().toLowerCase();
+
+        if (!email) {
+          results.failed.push({
+            row: rowNumber,
+            email: email || 'N/A',
+            reason: 'Email is required',
+          });
+          continue;
+        }
+
+        if (!accountType || !['premium', 'regular'].includes(accountType)) {
+          results.failed.push({
+            row: rowNumber,
+            email,
+            reason: 'Invalid account type. Must be "premium" or "regular"',
+          });
+          continue;
+        }
+
+        // Check for existing quiz taker
+        const existingQuizTaker = await QuizTaker.findOne({
+          email,
+          accountType,
+        });
+
+        if (existingQuizTaker) {
+          results.failed.push({
+            row: rowNumber,
+            email,
+            reason: `${accountType} quiz taker with this email already exists`,
+          });
+          continue;
+        }
+
+        const name = row.name?.toString().trim() || '';
+        let questionSetCombination = [];
+        let accessCode = null;
+
+        // Handle premium students
+        if (accountType === 'premium') {
+          // Get question set titles from columns
+          const qsTitle1 = row.questionSet1?.toString().trim();
+          const qsTitle2 = row.questionSet2?.toString().trim();
+          const qsTitle3 = row.questionSet3?.toString().trim();
+          const qsTitle4 = row.questionSet4?.toString().trim();
+
+          if (!qsTitle1 || !qsTitle2 || !qsTitle3 || !qsTitle4) {
+            results.failed.push({
+              row: rowNumber,
+              email,
+              reason: 'Premium students must have all 4 question sets specified',
+            });
+            continue;
+          }
+
+          // Look up question sets by title
+          const questionSetTitles = [qsTitle1, qsTitle2, qsTitle3, qsTitle4];
+          const questionSets = await QuestionSet.find({
+            title: { $in: questionSetTitles }
+          });
+
+          // Verify all question sets were found
+          if (questionSets.length !== 4) {
+            const foundTitles = questionSets.map(qs => qs.title);
+            const missingTitles = questionSetTitles.filter(t => !foundTitles.includes(t));
+            
+            results.failed.push({
+              row: rowNumber,
+              email,
+              reason: `Question set(s) not found: ${missingTitles.join(', ')}`,
+            });
+            continue;
+          }
+
+          // Map titles to IDs in the correct order
+          questionSetCombination = questionSetTitles.map(title => {
+            const qs = questionSets.find(q => q.title === title);
+            return qs._id;
+          });
+
+          // Generate unique access code
+          let isUnique = false;
+          while (!isUnique) {
+            accessCode = QuizTaker.generateAccessCode();
+            const existing = await QuizTaker.findOne({ accessCode });
+            if (!existing) isUnique = true;
+          }
+        }
+
+        // Create quiz taker
+        const quizTaker = new QuizTaker({
+          accountType,
+          email,
+          name,
+          ...(accountType === 'premium' && {
+            accessCode,
+            questionSetCombination,
+          }),
+        });
+
+        await quizTaker.save();
+
+        // Send email to premium students with access code
+        if (accountType === 'premium' && accessCode) {
+          try {
+            await sendAccessCodeEmail(email, name, accessCode);
+          } catch (emailError) {
+            console.error(`Failed to send email to ${email}:`, emailError);
+            // Don't fail the creation if email fails, just log it
+          }
+        }
+
+        results.successful.push({
+          row: rowNumber,
+          email,
+          accountType,
+          ...(accountType === 'premium' && { accessCode }),
+        });
+
+      } catch (error) {
+        results.failed.push({
+          row: rowNumber,
+          email: row.email || 'N/A',
+          reason: error.message,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Bulk upload completed. ${results.successful.length} successful, ${results.failed.length} failed.`,
+      results: {
+        total: results.total,
+        successCount: results.successful.length,
+        failCount: results.failed.length,
+        successful: results.successful,
+        failed: results.failed,
+      },
+    });
+
+  } catch (error) {
+    console.error('Bulk upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during bulk upload',
+      error: error.message,
+    });
+  }
+});
+
+// @route   GET /api/admin/download-template
+// @desc    Download CSV template for bulk upload
+// @access  Private (Admin only)
+router.get('/download-template', verifyAdmin, (req, res) => {
+  try {
+    const template = [
+      {
+        email: 'student@example.com',
+        name: 'John Doe',
+        accountType: 'premium',
+        questionSet1: 'Math Basics',
+        questionSet2: 'Physics 101',
+        questionSet3: 'Chemistry',
+        questionSet4: 'Biology',
+      },
+      {
+        email: 'regular@example.com',
+        name: 'Jane Smith',
+        accountType: 'regular',
+        questionSet1: '',
+        questionSet2: '',
+        questionSet3: '',
+        questionSet4: '',
+      },
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(template);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Quiz Takers');
+
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename=quiztaker_upload_template.xlsx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error generating template',
+      error: error.message,
+    });
+  }
+});
+
 router.post('/quiztaker', verifyAdmin, async (req, res) => {
   try {
     const { email, name, questionSetCombination } = req.body;
