@@ -519,15 +519,15 @@ router.post("/submit-single-subject", async (req, res) => {
       // Grade based on question type
       switch (question.type) {
         case "multiple-choice":
-          const correctOption = question.options.find((opt) =>
-            opt.trim().startsWith(question.correctAnswer + "."),
-          );
-          if (submittedAnswer.answer === correctOption) {
-            answerObj.isCorrect = true;
-            answerObj.pointsAwarded = question.points;
-            totalScore += question.points;
-          }
-          break;
+            // Direct comparison of answer text
+            if (
+              submittedAnswer.answer.trim() === question.correctAnswer.trim()
+            ) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              totalScore += question.points;
+            }
+            break;
 
         case "true-false":
           if (
