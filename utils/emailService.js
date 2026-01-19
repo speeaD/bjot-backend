@@ -34,9 +34,9 @@ const transporter = nodemailer.createTransport({
 const sendAccessCodeEmail = async (email, name, accessCode) => {
   try {
     const mailOptions = {
-      from: `"Quiz Platform" <${process.env.EMAIL_USER}>`,
+      from: `"BJOT Admin"`,
       to: email,
-      subject: 'Your Quiz Platform Access Code',
+      subject: 'Your BJOT Student Access Code',
       html: `
         <!DOCTYPE html>
         <html>
@@ -103,7 +103,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
             <div class="content">
               <p>Hello ${name || 'Student'},</p>
               
-              <p>Your premium account has been successfully created. You can now access all assigned quizzes using your unique access code.</p>
+              <p>Your premium account has been successfully created. You can now access all assigned exams using your unique access code.</p>
               
               <div class="access-code">
                 ${accessCode}
@@ -111,10 +111,9 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
               
               <p><strong>How to use your access code:</strong></p>
               <ol>
-                <li>Visit the quiz platform login page</li>
-                <li>Enter your email address: <strong>${email}</strong></li>
+                <li>Visit the bjot student login page</li>
                 <li>Enter your access code shown above</li>
-                <li>Start taking your assigned quizzes!</li>
+                <li>Start taking your assigned exams, and take time to explore our cbt-simulator and fun games!</li>
               </ol>
               
               <p><strong>Important:</strong></p>
@@ -132,7 +131,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
             </div>
             <div class="footer">
               <p>This is an automated email. Please do not reply to this message.</p>
-              <p>&copy; ${new Date().getFullYear()} Quiz Platform. All rights reserved.</p>
+              <p>&copy; ${new Date().getFullYear()} BJOT Online. All rights reserved.</p>
             </div>
           </div>
         </body>
@@ -147,15 +146,14 @@ Your Access Code: ${accessCode}
 
 How to login:
 1. Visit the quiz platform
-2. Enter your email: ${email}
-3. Enter your access code: ${accessCode}
+2. Enter your access code: ${accessCode}
 
 Keep this code secure and do not share it with others.
 
 Visit: ${process.env.FRONTEND_URL || 'http://localhost:3000'}
 
 Best regards,
-Quiz Platform Team
+BJOT Tech Support Team
       `,
     };
 
