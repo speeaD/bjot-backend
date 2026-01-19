@@ -102,10 +102,10 @@ router.post("/start-session", async (req, res) => {
       let needsUpdate = false;
 
       const currentCombo = JSON.stringify(
-        quizTaker.questionSetCombination.map((id) => id.toString()).sort()
+        quizTaker.questionSetCombination.map((id) => id.toString()).sort(),
       );
       const newCombo = JSON.stringify(
-        questionSetIds.map((id) => id.toString()).sort()
+        questionSetIds.map((id) => id.toString()).sort(),
       );
 
       if (currentCombo !== newCombo) {
@@ -232,10 +232,17 @@ router.post("/submit", async (req, res) => {
 
       questionSet.questions.forEach((question) => {
         const submittedAnswer = answers.find(
-          (ans) => ans.questionId === question._id.toString()
+          (ans) => ans.questionId === question._id.toString(),
         );
 
         if (!submittedAnswer) return;
+
+        console.log("Grading question:", {
+          questionId: question._id,
+          type: question.type,
+          correctAnswer: question.correctAnswer,
+          submittedAnswer: submittedAnswer.answer,
+        });
 
         const answerObj = {
           questionId: question._id,
@@ -250,7 +257,7 @@ router.post("/submit", async (req, res) => {
         switch (question.type) {
           case "multiple-choice":
             const correctOption = question.options.find((opt) =>
-              opt.trim().startsWith(question.correctAnswer + ".")
+              opt.trim().startsWith(question.correctAnswer + "."),
             );
             if (submittedAnswer.answer === correctOption) {
               answerObj.isCorrect = true;
@@ -294,6 +301,13 @@ router.post("/submit", async (req, res) => {
       });
     });
 
+    console.log("Grading results:", {
+      totalScore,
+      totalPoints,
+      percentage:
+        totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+    });
+
     // Create submission record
     const submission = new CBTSubmission({
       quizTakerId,
@@ -326,13 +340,11 @@ router.post("/submit", async (req, res) => {
                 ? Math.round((totalScore / totalPoints) * 100)
                 : 0,
             timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
-            examType: "multi-subject", // or 'multi-subject'
-            questionSets: [
-              {
-                questionSetId: questionSet._id,
-                title: questionSet.title,
-              },
-            ],
+            examType: "multi-subject",
+            questionSets: questionSets.map((qs) => ({
+              questionSetId: qs._id,
+              title: qs.title,
+            })),
             completedAt: new Date(),
           },
         },
@@ -490,7 +502,7 @@ router.post("/submit-single-subject", async (req, res) => {
 
     questionSet.questions.forEach((question) => {
       const submittedAnswer = answers.find(
-        (ans) => ans.questionId === question._id.toString()
+        (ans) => ans.questionId === question._id.toString(),
       );
 
       if (!submittedAnswer) return;
@@ -508,7 +520,7 @@ router.post("/submit-single-subject", async (req, res) => {
       switch (question.type) {
         case "multiple-choice":
           const correctOption = question.options.find((opt) =>
-            opt.trim().startsWith(question.correctAnswer + ".")
+            opt.trim().startsWith(question.correctAnswer + "."),
           );
           if (submittedAnswer.answer === correctOption) {
             answerObj.isCorrect = true;
