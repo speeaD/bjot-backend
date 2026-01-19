@@ -4,7 +4,7 @@ const { verifyAdmin } = require("../middleware/auth");
 const QuizTaker = require("../models/QuizTaker");
 const Quiz = require("../models/Quiz");
 const multer = require("multer");
-const XLSX = require("node-xlsx");
+const XLSX = require("xlsx");
 const { sendAccessCodeEmail } = require("../utils/emailService");
 
 // @route   POST /api/admin/quiztaker
@@ -48,17 +48,19 @@ router.post(
       }
 
       // Parse the uploaded file
-      const workbook = XLSX.parse(req.file.buffer);
-      const data = workbook[0].data; // Get first sheet's data
+      const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet);
 
-      const headers = data[0]; // First row is headers
-      const jsonData = data.slice(1).map((row) => {
-        const obj = {};
-        headers.forEach((header, index) => {
-          obj[header] = row[index];
-        });
-        return obj;
-      });
+      // const headers = data[0]; // First row is headers
+      // const jsonData = data.slice(1).map((row) => {
+      //   const obj = {};
+      //   headers.forEach((header, index) => {
+      //     obj[header] = row[index];
+      //   });
+      //   return obj;
+      // });
 
       if (!data || data.length === 0) {
         return res.status(400).json({
