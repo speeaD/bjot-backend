@@ -34,7 +34,7 @@ const transporter = nodemailer.createTransport({
 const sendAccessCodeEmail = async (email, name, accessCode) => {
   try {
     const mailOptions = {
-      from: `"BJOT Admin"`,
+      from: `"BJOT Admin" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'Your BJOT Student Access Code',
       html: `
@@ -53,7 +53,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
               padding: 20px;
             }
             .header {
-              background-color: #4CAF50;
+              background-color: #2b73c5;
               color: white;
               padding: 20px;
               text-align: center;
@@ -67,14 +67,14 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
             }
             .access-code {
               background-color: #fff;
-              border: 2px dashed #4CAF50;
+              border: 2px dashed #2b73c5;
               padding: 20px;
               text-align: center;
               font-size: 24px;
               font-weight: bold;
               letter-spacing: 3px;
               margin: 20px 0;
-              color: #4CAF50;
+              color: #2b73c5;
             }
             .footer {
               text-align: center;
@@ -87,7 +87,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
             .button {
               display: inline-block;
               padding: 12px 30px;
-              background-color: #4CAF50;
+              background-color: #2b73c5;
               color: white;
               text-decoration: none;
               border-radius: 5px;
@@ -98,7 +98,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
         <body>
           <div class="container">
             <div class="header">
-              <h1>Welcome to Quiz Platform!</h1>
+              <h1>Welcome to BJOT Student</h1>
             </div>
             <div class="content">
               <p>Hello ${name || 'Student'},</p>
@@ -125,7 +125,7 @@ const sendAccessCodeEmail = async (email, name, accessCode) => {
               
               <div style="text-align: center;">
                 <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}" class="button">
-                  Go to Quiz Platform
+                  Go to BJOT Student Website
                 </a>
               </div>
             </div>
