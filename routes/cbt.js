@@ -76,6 +76,7 @@ router.post("/start-session", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
+        accessCode: QuizTaker.generateAccessCode(), // Add this line
         questionSetCombination: questionSetIds,
         isActive: true,
       });
@@ -412,6 +413,7 @@ router.post("/start-single-subject", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
+        accessCode: QuizTaker.generateAccessCode(), // Add this line
         questionSetCombination: questionSetId,
         isActive: true,
       });
@@ -518,16 +520,14 @@ router.post("/submit-single-subject", async (req, res) => {
 
       // Grade based on question type
       switch (question.type) {
-         case "multiple-choice":
-            // Direct comparison of answer text
-            if (
-              submittedAnswer.answer.trim() === question.correctAnswer.trim()
-            ) {
-              answerObj.isCorrect = true;
-              answerObj.pointsAwarded = question.points;
-              totalScore += question.points;
-            }
-            break;
+        case "multiple-choice":
+          // Direct comparison of answer text
+          if (submittedAnswer.answer.trim() === question.correctAnswer.trim()) {
+            answerObj.isCorrect = true;
+            answerObj.pointsAwarded = question.points;
+            totalScore += question.points;
+          }
+          break;
 
         case "true-false":
           if (

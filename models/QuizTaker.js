@@ -58,15 +58,16 @@ const QuizTakerSchema = new mongoose.Schema({
   
   // Question set combination (array of 4 question set IDs)
   questionSetCombination: {
-    type: [mongoose.Schema.Types.ObjectId],
-    ref: 'QuestionSet',
-    validate: {
-      validator: function(arr) {
-        return arr.length === 4;
-      },
-      message: 'Question set combination must contain exactly 4 question sets'
-    }
-  },
+  type: [mongoose.Schema.Types.ObjectId],
+  ref: 'QuestionSet',
+  validate: {
+    validator: function(arr) {
+      // Allow 1 (single-subject) or 4 (multi-subject) question sets
+      return arr.length === 1 || arr.length === 4;
+    },
+    message: 'Question set combination must contain either 1 or 4 question sets'
+  }
+},
   
   accessCode: {
     type: String,
