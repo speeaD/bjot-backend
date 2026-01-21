@@ -412,6 +412,7 @@ router.post("/start-single-subject", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
+        questionSetCombination: questionSetId,
         isActive: true,
       });
 
@@ -517,7 +518,7 @@ router.post("/submit-single-subject", async (req, res) => {
 
       // Grade based on question type
       switch (question.type) {
-        case "multiple-choice":
+         case "multiple-choice":
             // Direct comparison of answer text
             if (
               submittedAnswer.answer.trim() === question.correctAnswer.trim()
