@@ -412,7 +412,6 @@ router.post("/start-single-subject", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
-        questionSetCombination: questionSetIds,
         isActive: true,
       });
 
