@@ -345,6 +345,7 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
     });
 
     await quizTaker.save();
+    await sendAccessCodeEmail(email, name, accessCode);
 
     res.status(201).json({
       success: true,
