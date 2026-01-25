@@ -304,7 +304,7 @@ router.post("/submit", async (req, res) => {
 
     console.log("Grading results:", {
       totalScore,
-      totalPoints,
+      totalPoints: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 400) : 0,
       percentage:
         totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
     });

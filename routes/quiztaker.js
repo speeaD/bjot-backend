@@ -973,7 +973,7 @@ router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
         quizId: quiz.quizId?._id,
         quizTitle: quiz.quizId?.settings?.title || 'CBT Exam',
         score: quiz.score || 0,
-        totalPoints: quiz.totalPoints || 0,
+        totalPoints: quiz.totalPoints > 0 ? Math.round((quiz.score / quiz.totalPoints) * 400) : 0,
         percentage: quiz.totalPoints > 0 
           ? Math.round((quiz.score / quiz.totalPoints) * 100) 
           : 0,
