@@ -22,6 +22,7 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         assignedQuizzes: quizTaker.assignedQuizzes,
+        
         createdAt: quizTaker.createdAt,
       },
     });
@@ -694,29 +695,14 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       switch (question.type) {
         case "multiple-choice":
-          const correctOptionLetter = question.correctAnswer;
-
-          let optionsArray;
-          if (Array.isArray(question.options)) {
-            optionsArray = question.options;
-          } else if (typeof question.options === "string") {
-            optionsArray = question.options.split("|");
-          } else {
-            optionsArray = Object.values(question.options);
-          }
-
-          const correctOption = optionsArray.find((opt) =>
-            String(opt).trim().startsWith(correctOptionLetter + ".")
-          );
-
-          if (submittedAnswer.answer === correctOption) {
-            answerObj.isCorrect = true;
-            answerObj.pointsAwarded = question.points;
-            questionSetScore += question.points;
-          } else {
-            answerObj.isCorrect = false;
-          }
-          break;
+          if (
+              submittedAnswer.answer.trim() === question.correctAnswer.trim()
+            ) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              totalScore += question.points;
+            }
+            break;
 
         case "true-false":
           if (

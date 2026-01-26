@@ -129,6 +129,7 @@ const QuizTakerSchema = new mongoose.Schema({
       ref: 'Quiz',
       required: true,
     },
+    
     assignedAt: {
       type: Date,
       default: Date.now,
