@@ -128,19 +128,19 @@ router.post('/admin/register', async (req, res) => {
 // @access  Public
 router.post('/quiztaker/login', async (req, res) => {
   try {
-    const { accessCode } = req.body;
+    const { email } = req.body;
 
     // Validation
-    if (!accessCode) {
+    if (!email) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Please provide access code' 
+        message: 'Please provide a valid email address' 
       });
     }
 
     // Check if quiz taker exists
     const quizTaker = await QuizTaker.findOne({ 
-      accessCode: accessCode.toUpperCase() 
+      email: email.trim().lowercase()
     });
 
     if (!quizTaker) {

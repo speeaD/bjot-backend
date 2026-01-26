@@ -192,14 +192,14 @@ router.post(
           await quizTaker.save();
 
           // Send email to premium students with access code
-          if (accountType === "premium" && accessCode) {
-            try {
-              await sendAccessCodeEmail(email, name, accessCode);
-            } catch (emailError) {
-              console.error(`Failed to send email to ${email}:`, emailError);
-              // Don't fail the creation if email fails, just log it
-            }
-          }
+          // if (accountType === "premium" && accessCode) {
+          //   try {
+          //     await sendAccessCodeEmail(email, name, accessCode);
+          //   } catch (emailError) {
+          //     console.error(`Failed to send email to ${email}:`, emailError);
+          //     // Don't fail the creation if email fails, just log it
+          //   }
+          // }
 
           results.successful.push({
             row: rowNumber,
