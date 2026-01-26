@@ -140,7 +140,7 @@ router.post('/quiztaker/login', async (req, res) => {
 
     // Check if quiz taker exists
     const quizTaker = await QuizTaker.findOne({ 
-      email: email.trim().lowercase()
+      email: email.trim()
     });
 
     if (!quizTaker) {
