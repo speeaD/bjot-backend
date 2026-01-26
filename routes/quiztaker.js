@@ -613,26 +613,37 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       });
     }
 
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "You have already completed this quiz",
-      });
-    }
-
-    if (assignedQuiz.status !== "in-progress") {
-      return res.status(400).json({
-        success: false,
-        message: "You must start the quiz before submitting",
-      });
-    }
-
     const quiz = await Quiz.findById(req.params.quizId);
 
     if (!quiz) {
       return res.status(404).json({
         success: false,
         message: "Quiz not found",
+      });
+    }
+
+    // Check if quiz allows multiple attempts
+    const allowsMultipleAttempts = quiz.settings.multipleAttempts || false;
+
+    if (assignedQuiz.status === "completed" && !allowsMultipleAttempts) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already completed this quiz",
+      });
+    }
+
+    // If retaking, ensure status is in-progress
+    if (assignedQuiz.status === "completed" && allowsMultipleAttempts) {
+      assignedQuiz.status = "in-progress";
+      if (!assignedQuiz.startedAt) {
+        assignedQuiz.startedAt = new Date();
+      }
+    }
+
+    if (assignedQuiz.status !== "in-progress") {
+      return res.status(400).json({
+        success: false,
+        message: "You must start the quiz before submitting",
       });
     }
 
@@ -695,14 +706,17 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       switch (question.type) {
         case "multiple-choice":
+          // Direct comparison of answer text
           if (
-              submittedAnswer.answer.trim() === question.correctAnswer.trim()
-            ) {
-              answerObj.isCorrect = true;
-              answerObj.pointsAwarded = question.points;
-              totalScore += question.points;
-            }
-            break;
+            submittedAnswer.answer.trim() === question.correctAnswer.trim()
+          ) {
+            answerObj.isCorrect = true;
+            answerObj.pointsAwarded = question.points;
+            questionSetScore += question.points; // ✅ FIXED
+          } else {
+            answerObj.isCorrect = false;
+          }
+          break;
 
         case "true-false":
           if (
