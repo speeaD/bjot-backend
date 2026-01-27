@@ -496,9 +496,90 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
   }
 });
 
+router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
+  try {
+    const { quizTakerIds } = req.body;
+
+    // Validation
+    if (!quizTakerIds || !Array.isArray(quizTakerIds) || quizTakerIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide quizTakerIds array",
+      });
+    }
+
+    const results = {
+      success: [],
+      failed: [],
+    };
+
+    const QuizSubmission = require("../models/QuizSubmission");
+
+    for (const takerId of quizTakerIds) {
+      try {
+        const quizTaker = await QuizTaker.findById(takerId);
+
+        if (!quizTaker) {
+          results.failed.push({
+            quizTakerId: takerId,
+            reason: "Quiz taker not found",
+          });
+          continue;
+        }
+
+        // Check if quiz taker has any completed submissions
+        const hasSubmissions = await QuizSubmission.exists({
+          quizTakerId: takerId,
+        });
+
+        if (hasSubmissions) {
+          // Option 1: Prevent deletion if they have submissions
+          results.failed.push({
+            quizTakerId: takerId,
+            email: quizTaker.email,
+            reason: "Cannot delete quiz taker with existing submissions",
+          });
+          continue;
+
+          // Option 2: Delete submissions along with quiz taker (uncomment if preferred)
+          // await QuizSubmission.deleteMany({ quizTakerId: takerId });
+        }
+
+        // Delete the quiz taker
+        await quizTaker.deleteOne();
+
+        results.success.push({
+          quizTakerId: takerId,
+          email: quizTaker.email,
+          accountType: quizTaker.accountType,
+        });
+      } catch (error) {
+        results.failed.push({
+          quizTakerId: takerId,
+          reason: error.message,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Deleted ${results.success.length} quiz taker(s)`,
+      results,
+    });
+  } catch (error) {
+    console.error("Bulk delete error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+});
+
 // @route   DELETE /api/admin/quiztaker/:id
-// @desc    Delete quiz taker
+// @desc    Delete single quiz taker (keep existing for backward compatibility)
 // @access  Private (Admin only)
+// NOTE: This route already exists in your code, just ensuring it stays
 router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.params.id);
@@ -507,6 +588,19 @@ router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Quiz taker not found",
+      });
+    }
+
+    // Optional: Check for submissions before deletion
+    const QuizSubmission = require("../models/QuizSubmission");
+    const hasSubmissions = await QuizSubmission.exists({
+      quizTakerId: req.params.id,
+    });
+
+    if (hasSubmissions) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot delete quiz taker with existing submissions. Please delete submissions first or contact support.",
       });
     }
 
