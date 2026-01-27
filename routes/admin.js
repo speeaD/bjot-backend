@@ -633,57 +633,109 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
 // @route   DELETE /api/admin/unassign-quiz
 // @desc    Unassign quiz from quiz taker
 // @access  Private (Admin only)
-router.delete("/unassign-quiz", verifyAdmin, async (req, res) => {
+// Add this route to your existing admin routes file (after the assign-quiz route)
+
+// @route   POST /api/admin/quiztakers/unassign
+// @desc    Unassign quiz from multiple quiz takers (bulk operation)
+// @access  Private (Admin only)
+router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
   try {
-    const { quizId, quizTakerId } = req.body;
+    const { quizId, quizTakerIds } = req.body;
 
-    const quizTaker = await QuizTaker.findById(quizTakerId);
-
-    if (!quizTaker) {
-      return res.status(404).json({
-        success: false,
-        message: "Quiz taker not found",
-      });
-    }
-
-    if (quizTaker.accountType !== "premium") {
+    // Validation
+    if (!quizId || !quizTakerIds || !Array.isArray(quizTakerIds)) {
       return res.status(400).json({
         success: false,
-        message: "Can only unassign quizzes from premium students",
+        message: "Please provide quizId and quizTakerIds array",
       });
     }
 
-    // Check if quiz is assigned and not completed
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === quizId,
-    );
-
-    if (!assignedQuiz) {
+    // Check if quiz exists
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) {
       return res.status(404).json({
         success: false,
-        message: "Quiz not assigned to this quiz taker",
+        message: "Quiz not found",
       });
     }
 
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot unassign completed quiz",
-      });
+    const results = {
+      success: [],
+      failed: [],
+    };
+
+    for (const takerId of quizTakerIds) {
+      try {
+        const quizTaker = await QuizTaker.findById(takerId);
+
+        if (!quizTaker) {
+          results.failed.push({ 
+            quizTakerId: takerId, 
+            reason: "Quiz taker not found" 
+          });
+          continue;
+        }
+
+        // Only allow unassigning from premium students
+        if (quizTaker.accountType !== "premium") {
+          results.failed.push({
+            quizTakerId: takerId,
+            email: quizTaker.email,
+            reason: "Can only unassign quizzes from premium students",
+          });
+          continue;
+        }
+
+        // Check if quiz is assigned
+        const assignedQuizIndex = quizTaker.assignedQuizzes.findIndex(
+          (aq) => aq.quizId.toString() === quizId
+        );
+
+        if (assignedQuizIndex === -1) {
+          results.failed.push({
+            quizTakerId: takerId,
+            email: quizTaker.email,
+            reason: "Quiz not assigned to this quiz taker",
+          });
+          continue;
+        }
+
+        const assignedQuiz = quizTaker.assignedQuizzes[assignedQuizIndex];
+
+        // Check if quiz is completed
+        if (assignedQuiz.status === "completed") {
+          results.failed.push({
+            quizTakerId: takerId,
+            email: quizTaker.email,
+            reason: "Cannot unassign completed quiz",
+          });
+          continue;
+        }
+
+        // Remove quiz assignment
+        quizTaker.assignedQuizzes.splice(assignedQuizIndex, 1);
+
+        await quizTaker.save();
+        
+        results.success.push({ 
+          quizTakerId: takerId, 
+          email: quizTaker.email 
+        });
+      } catch (error) {
+        results.failed.push({ 
+          quizTakerId: takerId, 
+          reason: error.message 
+        });
+      }
     }
-
-    // Remove quiz assignment
-    quizTaker.assignedQuizzes = quizTaker.assignedQuizzes.filter(
-      (aq) => aq.quizId.toString() !== quizId,
-    );
-
-    await quizTaker.save();
 
     res.json({
       success: true,
-      message: "Quiz unassigned successfully",
+      message: `Quiz unassigned from ${results.success.length} quiz taker(s)`,
+      results,
     });
   } catch (error) {
+    console.error("Unassign quiz error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -691,7 +743,6 @@ router.delete("/unassign-quiz", verifyAdmin, async (req, res) => {
     });
   }
 });
-
 // @route   GET /api/admin/submissions
 // @desc    Get all quiz submissions (with filter for account type)
 // @access  Private (Admin only)
