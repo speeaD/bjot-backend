@@ -3,6 +3,7 @@ const router = express.Router();
 const { verifyAdmin } = require("../middleware/auth");
 const QuizTaker = require("../models/QuizTaker");
 const Quiz = require("../models/Quiz");
+const QuizSubmission = require("../models/QuizSubmission");
 const multer = require("multer");
 const XLSX = require("xlsx");
 const { sendAccessCodeEmail } = require("../utils/emailService");
@@ -513,7 +514,7 @@ router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
       failed: [],
     };
 
-    const QuizSubmission = require("../models/QuizSubmission");
+    
 
     for (const takerId of quizTakerIds) {
       try {
@@ -533,16 +534,7 @@ router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
         });
 
         if (hasSubmissions) {
-          // Option 1: Prevent deletion if they have submissions
-          results.failed.push({
-            quizTakerId: takerId,
-            email: quizTaker.email,
-            reason: "Cannot delete quiz taker with existing submissions",
-          });
-          continue;
-
-          // Option 2: Delete submissions along with quiz taker (uncomment if preferred)
-          // await QuizSubmission.deleteMany({ quizTakerId: takerId });
+          await QuizSubmission.deleteMany({ quizTakerId: takerId });
         }
 
         // Delete the quiz taker
