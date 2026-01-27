@@ -656,15 +656,24 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       });
     }
 
+    // ✅ FIX: Only look for in-progress submissions
+    // This ensures new attempts create new submissions
     let submission = await QuizSubmission.findOne({
       quizId: quiz._id,
       quizTakerId: quizTaker._id,
-      status: { $in: ['in-progress', 'auto-graded', 'pending-manual-grading'] }
+      status: 'in-progress'  // ✅ FIXED: Only find in-progress submissions
     });
 
     const isNewSubmission = !submission;
 
     if (isNewSubmission) {
+      // Count existing submissions for attempt number
+      const existingSubmissionsCount = await QuizSubmission.countDocuments({
+        quizId: quiz._id,
+        quizTakerId: quizTaker._id,
+        status: { $in: ['auto-graded', 'pending-manual-grading', 'graded'] }
+      });
+
       submission = new QuizSubmission({
         quizId: quiz._id,
         quizTakerId: quizTaker._id,
@@ -677,6 +686,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
         totalPoints: quiz.totalPoints,
         status: 'in-progress',
         questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
+        attemptNumber: existingSubmissionsCount + 1, // Track attempt number
       });
     }
 
@@ -706,13 +716,12 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       switch (question.type) {
         case "multiple-choice":
-          // Direct comparison of answer text
           if (
             submittedAnswer.answer.trim() === question.correctAnswer.trim()
           ) {
             answerObj.isCorrect = true;
             answerObj.pointsAwarded = question.points;
-            questionSetScore += question.points; // ✅ FIXED
+            questionSetScore += question.points;
           } else {
             answerObj.isCorrect = false;
           }
@@ -805,11 +814,30 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       const startTime = new Date(assignedQuiz.startedAt);
       submission.timeTaken = Math.floor((endTime - startTime) / 1000);
       submission.submittedAt = endTime;
-      submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded";
+      submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded"; // ✅ This now changes from in-progress
 
       assignedQuiz.status = "completed";
       assignedQuiz.completedAt = endTime;
       assignedQuiz.submissionId = submission._id;
+
+      // ✅ NEW: Track all submissions in quizzesTaken array
+      const quizTakenEntry = {
+        quizId: quiz._id,
+        score: submission.score,
+        totalPoints: submission.totalPoints,
+        percentage: submission.percentage,
+        timeTaken: submission.timeTaken,
+        examType: 'multi-subject',
+        questionSets: quiz.questionSets.map(qs => ({
+          questionSetId: qs.questionSetId,
+          title: qs.title
+        })),
+        completedAt: endTime,
+        attemptNumber: submission.attemptNumber || 1,
+      };
+
+      // Add to quizzesTaken array
+      quizTaker.quizzesTaken.push(quizTakenEntry);
     }
 
     quizTaker.markModified("assignedQuizzes");
@@ -830,6 +858,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
         timeTaken: submission.timeTaken,
         status: submission.status,
         isFinalSubmission: isFinalSubmission || false,
+        attemptNumber: submission.attemptNumber,
       },
     });
   } catch (error) {
