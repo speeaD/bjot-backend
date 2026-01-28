@@ -134,6 +134,7 @@ const QuizSubmissionSchema = new mongoose.Schema({
 }, {
   timestamps: true,
 });
+QuizSubmissionSchema.index({ quizId: 1, quizTakerId: 1 }, { unique: true, partialFilterExpression: { status: 'in-progress' } });
 
 // Calculate percentage before saving
 QuizSubmissionSchema.pre('save', function() {
@@ -149,6 +150,34 @@ QuizSubmissionSchema.pre('save', function() {
       }
     });
   }
+});
+
+QuizSubmissionSchema.pre('save', function() {
+  // Check for duplicate questionSetOrders
+  const questionSetOrders = this.questionSetSubmissions.map(qss => qss.questionSetOrder);
+  const uniqueOrders = [...new Set(questionSetOrders)];
+  
+  if (questionSetOrders.length !== uniqueOrders.length) {
+    return new Error('Duplicate question set submissions detected');
+  }
+  
+  // Validate that we don't have more than 4 question sets
+  if (this.questionSetSubmissions.length > 4) {
+    return new Error('Cannot have more than 4 question set submissions');
+  }
+});
+
+QuizSubmissionSchema.pre('save', function() {
+  const answeredQuestionSets = [...new Set(this.answers.map(a => a.questionSetOrder))];
+  const submittedQuestionSets = this.questionSetSubmissions.map(qss => qss.questionSetOrder);
+  
+  // Every answered question set should have a submission record
+  for (const order of answeredQuestionSets) {
+    if (!submittedQuestionSets.includes(order)) {
+      console.warn(`Missing question set submission for order ${order}`);
+    }
+  }
+  
 });
 
 // Helper method to get question set scores

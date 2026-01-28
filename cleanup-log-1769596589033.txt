@@ -1,0 +1,179 @@
+[2026-01-28T10:36:29.034Z] [INFO] 
+============================================================
+[2026-01-28T10:36:29.036Z] [INFO] QUIZ SUBMISSION CLEANUP SCRIPT
+[2026-01-28T10:36:29.036Z] [INFO] ============================================================
+
+[2026-01-28T10:36:29.036Z] [WARNING] ⚠️  RUNNING IN DRY RUN MODE - NO CHANGES WILL BE MADE
+[2026-01-28T10:36:29.036Z] [INFO]    Set DRY_RUN=false in environment to perform actual cleanup
+[2026-01-28T10:36:29.036Z] [INFO] 
+[2026-01-28T10:36:29.036Z] [INFO] Connecting to MongoDB...
+[2026-01-28T10:36:31.362Z] [SUCCESS] ✅ Connected to MongoDB
+[2026-01-28T10:36:31.363Z] [INFO] 
+[2026-01-28T10:36:31.364Z] [INFO] 
+============================================================
+[2026-01-28T10:36:31.364Z] [INFO] PHASE 1: ANALYSIS
+[2026-01-28T10:36:31.364Z] [INFO] ============================================================
+
+[2026-01-28T10:36:31.364Z] [INFO] 🔍 Finding orphaned submissions (no quiz taker)...
+[2026-01-28T10:36:39.773Z] [INFO]    Total orphaned submissions: 0
+[2026-01-28T10:36:39.774Z] [INFO] 
+[2026-01-28T10:36:39.775Z] [INFO] 🔍 Finding duplicate in-progress submissions...
+[2026-01-28T10:36:40.159Z] [INFO]    Found 4 duplicates for key: 6977d4ec8f945060cf0c12db_6977b7d75415be2cd43bad58
+[2026-01-28T10:36:40.160Z] [INFO]    Keeping: 69785a256092999e67c1a477 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.160Z] [INFO]    Marking for deletion: 69785a256092999e67c1a473 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.160Z] [INFO]    Marking for deletion: 69785a25e371fbe7210db696 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.161Z] [INFO]    Marking for deletion: 69785a256092999e67c1a471 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.161Z] [INFO]    Found 2 duplicates for key: 6977d4e78f945060cf0c07ff_6977b7a05415be2cd43ba84c
+[2026-01-28T10:36:40.161Z] [INFO]    Keeping: 697895467478d02849093dd8 (created: Tue Jan 27 2026 11:36:54 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.161Z] [INFO]    Marking for deletion: 697895467478d02849093dd6 (created: Tue Jan 27 2026 11:36:54 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.161Z] [INFO]    Found 2 duplicates for key: 6977d4ca8f945060cf0bcaf9_6977b7a05415be2cd43ba84c
+[2026-01-28T10:36:40.162Z] [INFO]    Keeping: 6978b389c1994844399be837 (created: Tue Jan 27 2026 13:46:01 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.162Z] [INFO]    Marking for deletion: 6978b389c1994844399be835 (created: Tue Jan 27 2026 13:46:01 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.162Z] [INFO]    Found 2 duplicates for key: 6977d52d8f945060cf0c9ae9_6977b7a05415be2cd43ba84c
+[2026-01-28T10:36:40.162Z] [INFO]    Keeping: 6978e56bc7f639db799a4b96 (created: Tue Jan 27 2026 17:18:51 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.162Z] [INFO]    Marking for deletion: 6978e56bc7f639db799a4b94 (created: Tue Jan 27 2026 17:18:51 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.162Z] [INFO]    Found 2 duplicates for key: 6977d4f58f945060cf0c24ef_6977b7a05415be2cd43ba84c
+[2026-01-28T10:36:40.162Z] [INFO]    Keeping: 6978e9e3b102698f2ea55e30 (created: Tue Jan 27 2026 17:37:55 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.163Z] [INFO]    Marking for deletion: 6978e9e3b102698f2ea55e2e (created: Tue Jan 27 2026 17:37:55 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:36:40.163Z] [INFO]    Total duplicate submissions to remove: 7
+[2026-01-28T10:36:40.163Z] [INFO] 
+[2026-01-28T10:36:40.163Z] [INFO] 🔍 Finding submissions with inconsistent state...
+[2026-01-28T10:36:40.901Z] [INFO]    Found: 6977eacbf3c3329e27887037 - wrong submission ID
+[2026-01-28T10:36:41.105Z] [INFO]    Found: 6978224553edcc56fb5773d5 - wrong submission ID
+[2026-01-28T10:36:41.303Z] [INFO]    Found: 69785a25e371fbe7210db696 - wrong submission ID
+[2026-01-28T10:36:41.496Z] [INFO]    Found: 69785a256092999e67c1a471 - wrong submission ID
+[2026-01-28T10:36:41.702Z] [INFO]    Found: 69785a256092999e67c1a473 - wrong submission ID
+[2026-01-28T10:36:41.892Z] [INFO]    Found: 69785a256092999e67c1a477 - wrong submission ID
+[2026-01-28T10:36:42.103Z] [INFO]    Found: 6978650ee371fbe7210dd70a - wrong submission ID
+[2026-01-28T10:36:42.292Z] [INFO]    Found: 69787e191f80a8e52e89b31a - wrong submission ID
+[2026-01-28T10:36:42.481Z] [INFO]    Found: 697891de1f80a8e52e89f453 - wrong submission ID
+[2026-01-28T10:36:42.671Z] [INFO]    Found: 697895467478d02849093dd6 - wrong submission ID
+[2026-01-28T10:36:42.860Z] [INFO]    Found: 697895467478d02849093dd8 - wrong submission ID
+[2026-01-28T10:36:43.053Z] [INFO]    Found: 697895f4a4e3295471147ce6 - wrong submission ID
+[2026-01-28T10:36:43.661Z] [INFO]    Found: 6978ba6ec98288975c1a0432 - wrong submission ID
+[2026-01-28T10:36:43.852Z] [INFO]    Found: 6978cfaadad5ea9d3c8f0242 - wrong submission ID
+[2026-01-28T10:36:44.042Z] [INFO]    Found: 6978e56bc7f639db799a4b94 - wrong submission ID
+[2026-01-28T10:36:44.242Z] [INFO]    Found: 6978e56bc7f639db799a4b96 - wrong submission ID
+[2026-01-28T10:36:44.451Z] [INFO]    Found: 6978e82887bd00062a7ee651 - wrong submission ID
+[2026-01-28T10:36:44.641Z] [INFO]    Found: 6978e920b102698f2ea55533 - wrong submission ID
+[2026-01-28T10:36:44.832Z] [INFO]    Found: 6978e9e3b102698f2ea55e2e - wrong submission ID
+[2026-01-28T10:36:45.024Z] [INFO]    Found: 6978e9e3b102698f2ea55e30 - wrong submission ID
+[2026-01-28T10:36:45.235Z] [INFO]    Found: 6978ea5387bd00062a7f05be - wrong submission ID
+[2026-01-28T10:36:45.432Z] [INFO]    Found: 6978ecb287bd00062a7f1f34 - wrong submission ID
+[2026-01-28T10:36:45.633Z] [INFO]    Found: 6978f248b102698f2ea5aecf - wrong submission ID
+[2026-01-28T10:36:45.836Z] [INFO]    Found: 6978ff0d68235a312f315ac6 - wrong submission ID
+[2026-01-28T10:36:46.059Z] [INFO]    Found: 697902e068235a312f3180e9 - wrong submission ID
+[2026-01-28T10:36:46.834Z] [INFO]    Total inconsistent submissions: 25
+[2026-01-28T10:36:46.834Z] [INFO] 
+[2026-01-28T10:36:46.835Z] [INFO] 🔍 Finding submissions with duplicate question set entries...
+[2026-01-28T10:36:47.240Z] [INFO]    Found: 6978b389c1994844399be835 - 4 entries, 3 unique
+[2026-01-28T10:36:47.241Z] [INFO]    Found: 6979136b113df95f15c9293a - 3 entries, 2 unique
+[2026-01-28T10:36:47.241Z] [INFO]    Total submissions with duplicate question sets: 2
+[2026-01-28T10:36:47.241Z] [INFO] 
+[2026-01-28T10:36:47.242Z] [INFO] 🔍 Finding stuck submissions (in-progress > 7 days)...
+[2026-01-28T10:36:47.440Z] [INFO]    Total stuck submissions: 0
+[2026-01-28T10:36:47.440Z] [INFO] 
+[2026-01-28T10:36:47.441Z] [INFO] 
+============================================================
+[2026-01-28T10:36:47.441Z] [INFO] ISSUES FOUND
+[2026-01-28T10:36:47.441Z] [INFO] ============================================================
+
+[2026-01-28T10:36:47.441Z] [INFO] Orphaned submissions: 0
+[2026-01-28T10:36:47.441Z] [INFO] Duplicate submissions: 7
+[2026-01-28T10:36:47.441Z] [INFO] Inconsistent submissions: 25
+[2026-01-28T10:36:47.441Z] [INFO] Submissions with duplicate question sets: 2
+[2026-01-28T10:36:47.442Z] [INFO] Stuck submissions (>7 days): 0
+[2026-01-28T10:36:47.442Z] [INFO] 
+[2026-01-28T10:36:47.442Z] [INFO] 
+============================================================
+[2026-01-28T10:36:47.442Z] [INFO] PHASE 2: CLEANUP
+[2026-01-28T10:36:47.442Z] [INFO] ============================================================
+
+[2026-01-28T10:36:47.442Z] [INFO] Cleaning up duplicate submissions...
+[2026-01-28T10:36:47.443Z] [INFO] Deleting submission: 69785a256092999e67c1a473 - Duplicate submission (older)
+[2026-01-28T10:36:47.443Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.443Z] [INFO] Deleting submission: 69785a25e371fbe7210db696 - Duplicate submission (older)
+[2026-01-28T10:36:47.443Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.443Z] [INFO] Deleting submission: 69785a256092999e67c1a471 - Duplicate submission (older)
+[2026-01-28T10:36:47.443Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.443Z] [INFO] Deleting submission: 697895467478d02849093dd6 - Duplicate submission (older)
+[2026-01-28T10:36:47.443Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.444Z] [INFO] Deleting submission: 6978b389c1994844399be835 - Duplicate submission (older)
+[2026-01-28T10:36:47.444Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.444Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b94 - Duplicate submission (older)
+[2026-01-28T10:36:47.444Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.444Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e2e - Duplicate submission (older)
+[2026-01-28T10:36:47.444Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.444Z] [INFO] 
+[2026-01-28T10:36:47.444Z] [INFO] Cleaning up inconsistent submissions...
+[2026-01-28T10:36:47.444Z] [INFO] Deleting submission: 6977eacbf3c3329e27887037 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.445Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.445Z] [INFO] Deleting submission: 6978224553edcc56fb5773d5 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.445Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.445Z] [INFO] Deleting submission: 69785a25e371fbe7210db696 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.445Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.445Z] [INFO] Deleting submission: 69785a256092999e67c1a471 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.446Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.446Z] [INFO] Deleting submission: 69785a256092999e67c1a473 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.446Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.446Z] [INFO] Deleting submission: 69785a256092999e67c1a477 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.446Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.446Z] [INFO] Deleting submission: 6978650ee371fbe7210dd70a - Quiz completed with different submission ID
+[2026-01-28T10:36:47.446Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.447Z] [INFO] Deleting submission: 69787e191f80a8e52e89b31a - Quiz completed with different submission ID
+[2026-01-28T10:36:47.447Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.447Z] [INFO] Deleting submission: 697891de1f80a8e52e89f453 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.447Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.447Z] [INFO] Deleting submission: 697895467478d02849093dd6 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.447Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.447Z] [INFO] Deleting submission: 697895467478d02849093dd8 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.447Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.448Z] [INFO] Deleting submission: 697895f4a4e3295471147ce6 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.448Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.448Z] [INFO] Deleting submission: 6978ba6ec98288975c1a0432 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.448Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.448Z] [INFO] Deleting submission: 6978cfaadad5ea9d3c8f0242 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.448Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.449Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b94 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.449Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.449Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b96 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.449Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.449Z] [INFO] Deleting submission: 6978e82887bd00062a7ee651 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.449Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.449Z] [INFO] Deleting submission: 6978e920b102698f2ea55533 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.450Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.450Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e2e - Quiz completed with different submission ID
+[2026-01-28T10:36:47.450Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.450Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e30 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.450Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.451Z] [INFO] Deleting submission: 6978ea5387bd00062a7f05be - Quiz completed with different submission ID
+[2026-01-28T10:36:47.451Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.451Z] [INFO] Deleting submission: 6978ecb287bd00062a7f1f34 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.452Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.452Z] [INFO] Deleting submission: 6978f248b102698f2ea5aecf - Quiz completed with different submission ID
+[2026-01-28T10:36:47.452Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.452Z] [INFO] Deleting submission: 6978ff0d68235a312f315ac6 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.452Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.458Z] [INFO] Deleting submission: 697902e068235a312f3180e9 - Quiz completed with different submission ID
+[2026-01-28T10:36:47.459Z] [INFO]    [DRY RUN] Would delete this submission
+[2026-01-28T10:36:47.460Z] [INFO] 
+[2026-01-28T10:36:47.460Z] [INFO] Fixing duplicate question sets...
+[2026-01-28T10:36:47.461Z] [INFO] Fixing duplicate question sets in: 6978b389c1994844399be835
+[2026-01-28T10:36:47.684Z] [INFO]    [DRY RUN] Would reduce from 4 to 3 question sets
+[2026-01-28T10:36:47.684Z] [INFO] Fixing duplicate question sets in: 6979136b113df95f15c9293a
+[2026-01-28T10:36:47.894Z] [INFO]    [DRY RUN] Would reduce from 3 to 2 question sets
+[2026-01-28T10:36:47.894Z] [INFO] 
+[2026-01-28T10:36:47.895Z] [INFO] 
+============================================================
+[2026-01-28T10:36:47.895Z] [INFO] CLEANUP SUMMARY
+[2026-01-28T10:36:47.895Z] [INFO] ============================================================
+
+[2026-01-28T10:36:47.895Z] [INFO] Total issues found: 34
+[2026-01-28T10:36:47.896Z] [INFO] Submissions deleted: 32
+[2026-01-28T10:36:47.896Z] [INFO] Submissions fixed: 2
+[2026-01-28T10:36:47.896Z] [INFO] Errors: 0
+[2026-01-28T10:36:47.896Z] [INFO] 
+[2026-01-28T10:36:47.896Z] [WARNING] ⚠️  DRY RUN COMPLETE - No actual changes were made
+[2026-01-28T10:36:47.896Z] [INFO]    Review the log and run with DRY_RUN=false to apply changes
+[2026-01-28T10:36:47.914Z] [INFO] 
+Disconnected from MongoDB

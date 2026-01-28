@@ -583,292 +583,348 @@ router.get("/quiz/:quizId/next-question-set", verifyQuizTaker, async (req, res) 
 // @desc    Submit question set answers (can be partial or final)
 // @access  Private (Quiz taker only)
 router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
-  try {
-    const { answers, questionSetOrder, isFinalSubmission } = req.body;
+  // Start a session for transaction
+  const session = await mongoose.startSession();
+  
+  const MAX_RETRIES = 3;
+  let attempt = 0;
 
-    if (!answers || !Array.isArray(answers)) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide answers array",
-      });
-    }
+  while (attempt < MAX_RETRIES) {
+    try {
+      // Start transaction
+      session.startTransaction();
 
-    if (!questionSetOrder || questionSetOrder < 1 || questionSetOrder > 4) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide valid questionSetOrder (1-4)",
-      });
-    }
+      const { questionSetOrder, answers, isFinalSubmission } = req.body;
 
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    const quiz = await Quiz.findById(req.params.quizId);
-
-    if (!quiz) {
-      return res.status(404).json({
-        success: false,
-        message: "Quiz not found",
-      });
-    }
-
-    // Check if quiz allows multiple attempts
-    const allowsMultipleAttempts = quiz.settings.multipleAttempts || false;
-
-    if (assignedQuiz.status === "completed" && !allowsMultipleAttempts) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already completed this quiz",
-      });
-    }
-
-    // If retaking, ensure status is in-progress
-    if (assignedQuiz.status === "completed" && allowsMultipleAttempts) {
-      assignedQuiz.status = "in-progress";
-      if (!assignedQuiz.startedAt) {
-        assignedQuiz.startedAt = new Date();
+      // Validation
+      if (!questionSetOrder || questionSetOrder < 1 || questionSetOrder > 4) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: "Invalid questionSetOrder. Must be between 1 and 4",
+        });
       }
-    }
 
-    if (assignedQuiz.status !== "in-progress") {
-      return res.status(400).json({
-        success: false,
-        message: "You must start the quiz before submitting",
-      });
-    }
+      if (!answers || !Array.isArray(answers)) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: "Answers must be provided as an array",
+        });
+      }
 
-    const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
+      // 🔑 Fetch fresh documents with session
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id).session(session);
 
-    if (!questionSet) {
-      return res.status(404).json({
-        success: false,
-        message: "Question set not found",
-      });
-    }
-
-    // ✅ FIX: Only look for in-progress submissions
-    // This ensures new attempts create new submissions
-    let submission = await QuizSubmission.findOne({
-      quizId: quiz._id,
-      quizTakerId: quizTaker._id,
-      status: 'in-progress'  // ✅ FIXED: Only find in-progress submissions
-    });
-
-    const isNewSubmission = !submission;
-
-    if (isNewSubmission) {
-      // Count existing submissions for attempt number
-      const existingSubmissionsCount = await QuizSubmission.countDocuments({
-        quizId: quiz._id,
-        quizTakerId: quizTaker._id,
-        status: { $in: ['auto-graded', 'pending-manual-grading', 'graded'] }
-      });
-
-      submission = new QuizSubmission({
-        quizId: quiz._id,
-        quizTakerId: quizTaker._id,
-        answers: [],
-        questionSetSubmissions: [],
-        startedAt: assignedQuiz.startedAt,
-        submittedAt: new Date(),
-        timeTaken: 0,
-        score: 0,
-        totalPoints: quiz.totalPoints,
-        status: 'in-progress',
-        questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
-        attemptNumber: existingSubmissionsCount + 1, // Track attempt number
-      });
-    }
-
-    const gradedAnswers = [];
-    let questionSetScore = 0;
-    let hasEssayQuestions = false;
-
-    answers.forEach((submittedAnswer) => {
-      const question = questionSet.questions.find(
-        q => q._id.toString() === submittedAnswer.questionId
+      const assignedQuiz = quizTaker.assignedQuizzes.find(
+        (aq) => aq.quizId.toString() === req.params.quizId
       );
 
-      if (!question) {
-        console.warn(`Question ${submittedAnswer.questionId} not found in question set ${questionSetOrder}`);
-        return;
+      if (!assignedQuiz) {
+        await session.abortTransaction();
+        return res.status(403).json({
+          success: false,
+          message: "This quiz is not assigned to you",
+        });
       }
 
-      const answerObj = {
-        questionId: question._id,
-        questionSetOrder: questionSetOrder,
-        questionType: question.type,
-        answer: submittedAnswer.answer,
-        pointsPossible: question.points,
-        pointsAwarded: 0,
-        isCorrect: null,
-      };
-
-      switch (question.type) {
-        case "multiple-choice":
-          if (
-            submittedAnswer.answer.trim() === question.correctAnswer.trim()
-          ) {
-            answerObj.isCorrect = true;
-            answerObj.pointsAwarded = question.points;
-            questionSetScore += question.points;
-          } else {
-            answerObj.isCorrect = false;
-          }
-          break;
-
-        case "true-false":
-          if (
-            String(submittedAnswer.answer).toLowerCase() ===
-            String(question.correctAnswer).toLowerCase()
-          ) {
-            answerObj.isCorrect = true;
-            answerObj.pointsAwarded = question.points;
-            questionSetScore += question.points;
-          } else {
-            answerObj.isCorrect = false;
-          }
-          break;
-
-        case "fill-in-the-blanks":
-          const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-          const correctAns = String(question.correctAnswer).trim().toLowerCase();
-
-          if (submittedAns === correctAns) {
-            answerObj.isCorrect = true;
-            answerObj.pointsAwarded = question.points;
-            questionSetScore += question.points;
-          } else {
-            answerObj.isCorrect = false;
-          }
-          break;
-
-        case "essay":
-          answerObj.isCorrect = null;
-          hasEssayQuestions = true;
-          break;
+      if (assignedQuiz.status === "completed") {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: "You have already completed this quiz",
+        });
       }
 
-      gradedAnswers.push(answerObj);
-    });
+      const quiz = await Quiz.findById(req.params.quizId).session(session);
 
-    submission.answers = submission.answers.filter(
-      ans => ans.questionSetOrder !== questionSetOrder
-    );
+      if (!quiz) {
+        await session.abortTransaction();
+        return res.status(404).json({
+          success: false,
+          message: "Quiz not found",
+        });
+      }
 
-    submission.answers.push(...gradedAnswers);
+      const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
 
-    // Update question set submission tracking
-    const existingQSSubmission = submission.questionSetSubmissions.find(
-      qss => qss.questionSetOrder === questionSetOrder
-    );
+      if (!questionSet) {
+        await session.abortTransaction();
+        return res.status(404).json({
+          success: false,
+          message: "Question set not found",
+        });
+      }
 
-    const orderAnswered = assignedQuiz.questionSetProgress.filter(
-      qsp => qsp.status === 'completed'
-    ).length + 1;
+      // Initialize progress if needed
+      if (!assignedQuiz.questionSetProgress || assignedQuiz.questionSetProgress.length === 0) {
+        quizTaker.initializeQuestionSetProgress(req.params.quizId);
+      }
 
-    if (existingQSSubmission) {
-      existingQSSubmission.submittedAt = new Date();
-      existingQSSubmission.score = questionSetScore;
-      existingQSSubmission.totalPoints = questionSet.totalPoints;
-    } else {
-      submission.questionSetSubmissions.push({
-        questionSetOrder,
-        submittedAt: new Date(),
-        score: questionSetScore,
-        totalPoints: questionSet.totalPoints,
-        orderAnswered,
+      const qsProgress = assignedQuiz.questionSetProgress.find(
+        qsp => qsp.questionSetOrder === questionSetOrder
+      );
+
+      // 🔒 CRITICAL: Prevent duplicate submissions of same question set
+      if (qsProgress && qsProgress.status === 'completed') {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          message: "This question set has already been submitted",
+        });
+      }
+
+      // Start quiz if not started
+      if (assignedQuiz.status === "pending") {
+        assignedQuiz.status = "in-progress";
+        assignedQuiz.startedAt = new Date();
+      }
+
+      // 🔑 Find ONLY in-progress submission for THIS quiz taker
+      let submission = await QuizSubmission.findOne({
+        quizId: quiz._id,
+        quizTakerId: quizTaker._id,
+        status: 'in-progress'
+      }).session(session);
+
+      const isNewSubmission = !submission;
+
+      if (isNewSubmission) {
+        // Count existing completed submissions for attempt number
+        const existingSubmissionsCount = await QuizSubmission.countDocuments({
+          quizId: quiz._id,
+          quizTakerId: quizTaker._id,
+          status: { $in: ['auto-graded', 'pending-manual-grading', 'graded'] }
+        }).session(session);
+
+        submission = new QuizSubmission({
+          quizId: quiz._id,
+          quizTakerId: quizTaker._id,
+          answers: [],
+          questionSetSubmissions: [],
+          startedAt: assignedQuiz.startedAt,
+          submittedAt: new Date(),
+          timeTaken: 0,
+          score: 0,
+          totalPoints: quiz.totalPoints,
+          status: 'in-progress',
+          questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
+          attemptNumber: existingSubmissionsCount + 1,
+        });
+      }
+
+      // Grade answers
+      const gradedAnswers = [];
+      let questionSetScore = 0;
+      let hasEssayQuestions = false;
+
+      answers.forEach((submittedAnswer) => {
+        const question = questionSet.questions.find(
+          q => q._id.toString() === submittedAnswer.questionId
+        );
+
+        if (!question) {
+          console.warn(`Question ${submittedAnswer.questionId} not found in question set ${questionSetOrder}`);
+          return;
+        }
+
+        const answerObj = {
+          questionId: question._id,
+          questionSetOrder: questionSetOrder,
+          questionType: question.type,
+          answer: submittedAnswer.answer,
+          pointsPossible: question.points,
+          pointsAwarded: 0,
+          isCorrect: null,
+        };
+
+        switch (question.type) {
+          case "multiple-choice":
+            if (submittedAnswer.answer.trim() === question.correctAnswer.trim()) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              questionSetScore += question.points;
+            } else {
+              answerObj.isCorrect = false;
+            }
+            break;
+
+          case "true-false":
+            if (
+              String(submittedAnswer.answer).toLowerCase() ===
+              String(question.correctAnswer).toLowerCase()
+            ) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              questionSetScore += question.points;
+            } else {
+              answerObj.isCorrect = false;
+            }
+            break;
+
+          case "fill-in-the-blanks":
+            const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
+            const correctAns = String(question.correctAnswer).trim().toLowerCase();
+
+            if (submittedAns === correctAns) {
+              answerObj.isCorrect = true;
+              answerObj.pointsAwarded = question.points;
+              questionSetScore += question.points;
+            } else {
+              answerObj.isCorrect = false;
+            }
+            break;
+
+          case "essay":
+            answerObj.isCorrect = null;
+            hasEssayQuestions = true;
+            break;
+        }
+
+        gradedAnswers.push(answerObj);
+      });
+
+      // 🔑 Remove old answers for this question set (prevent duplicates)
+      submission.answers = submission.answers.filter(
+        ans => ans.questionSetOrder !== questionSetOrder
+      );
+
+      submission.answers.push(...gradedAnswers);
+
+      // 🔑 Update or add question set submission tracking
+      const existingQSSubmission = submission.questionSetSubmissions.find(
+        qss => qss.questionSetOrder === questionSetOrder
+      );
+
+      const orderAnswered = assignedQuiz.questionSetProgress.filter(
+        qsp => qsp.status === 'completed'
+      ).length + 1;
+
+      if (existingQSSubmission) {
+        // Update existing
+        existingQSSubmission.submittedAt = new Date();
+        existingQSSubmission.score = questionSetScore;
+        existingQSSubmission.totalPoints = questionSet.totalPoints;
+        existingQSSubmission.orderAnswered = orderAnswered;
+      } else {
+        // Add new (only if not exists)
+        submission.questionSetSubmissions.push({
+          questionSetOrder,
+          submittedAt: new Date(),
+          score: questionSetScore,
+          totalPoints: questionSet.totalPoints,
+          orderAnswered,
+        });
+      }
+
+      // Calculate total score
+      submission.score = submission.answers.reduce(
+        (sum, answer) => sum + answer.pointsAwarded, 0
+      );
+
+      // Update question set progress
+      if (qsProgress) {
+        qsProgress.status = 'completed';
+        qsProgress.completedAt = new Date();
+        qsProgress.score = questionSetScore;
+        qsProgress.totalPoints = questionSet.totalPoints;
+      }
+
+      const hasAnyEssay = submission.answers.some(ans => ans.questionType === 'essay');
+      
+      if (isFinalSubmission) {
+        const endTime = new Date();
+        const startTime = new Date(assignedQuiz.startedAt);
+        submission.timeTaken = Math.floor((endTime - startTime) / 1000);
+        submission.submittedAt = endTime;
+        submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded";
+
+        assignedQuiz.status = "completed";
+        assignedQuiz.completedAt = endTime;
+        assignedQuiz.submissionId = submission._id;
+
+        const quizTakenEntry = {
+          quizId: quiz._id,
+          score: submission.score,
+          totalPoints: submission.totalPoints,
+          percentage: submission.percentage,
+          timeTaken: submission.timeTaken,
+          examType: 'multi-subject',
+          questionSets: quiz.questionSets.map(qs => ({
+            questionSetId: qs.questionSetId,
+            title: qs.title
+          })),
+          completedAt: endTime,
+          attemptNumber: submission.attemptNumber || 1,
+        };
+
+        quizTaker.quizzesTaken.push(quizTakenEntry);
+      }
+
+      quizTaker.markModified("assignedQuizzes");
+
+      // 🔑 ATOMIC: Both saves succeed or both fail
+      await submission.save({ session });
+      await quizTaker.save({ session });
+
+      // Commit transaction
+      await session.commitTransaction();
+
+      // Success! Return response
+      return res.json({
+        success: true,
+        message: isFinalSubmission ? "Quiz submitted successfully" : "Question set submitted successfully",
+        submission: {
+          id: submission._id,
+          questionSetScore: questionSetScore,
+          questionSetTotalPoints: questionSet.totalPoints,
+          overallScore: submission.score,
+          overallTotalPoints: submission.totalPoints,
+          percentage: submission.percentage,
+          timeTaken: submission.timeTaken,
+          status: submission.status,
+          isFinalSubmission: isFinalSubmission || false,
+          attemptNumber: submission.attemptNumber,
+        },
+      });
+
+    } catch (error) {
+      // Abort transaction on any error
+      await session.abortTransaction();
+
+      // Check if it's a version error
+      if (error.name === 'VersionError') {
+        attempt++;
+        console.log(`Version conflict on attempt ${attempt}/${MAX_RETRIES}, retrying...`);
+        
+        if (attempt >= MAX_RETRIES) {
+          console.error("Max retries reached for version conflict:", error);
+          await session.endSession();
+          return res.status(409).json({
+            success: false,
+            message: "Unable to save due to concurrent updates. Please try again.",
+            error: error.message,
+          });
+        }
+        
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt - 1)));
+        continue; // Retry
+      }
+      
+      // Other errors - don't retry
+      console.error("Submit quiz error:", error);
+      await session.endSession();
+      return res.status(500).json({
+        success: false,
+        message: "Server error",
+        error: error.message,
       });
     }
-
-    submission.score = submission.answers.reduce(
-      (sum, answer) => sum + answer.pointsAwarded, 0
-    );
-
-    // Update question set progress
-    const qsProgress = assignedQuiz.questionSetProgress.find(
-      qsp => qsp.questionSetOrder === questionSetOrder
-    );
-
-    if (qsProgress) {
-      qsProgress.status = 'completed';
-      qsProgress.completedAt = new Date();
-      qsProgress.score = questionSetScore;
-      qsProgress.totalPoints = questionSet.totalPoints;
-    }
-
-    const hasAnyEssay = submission.answers.some(ans => ans.questionType === 'essay');
-    
-    if (isFinalSubmission) {
-      const endTime = new Date();
-      const startTime = new Date(assignedQuiz.startedAt);
-      submission.timeTaken = Math.floor((endTime - startTime) / 1000);
-      submission.submittedAt = endTime;
-      submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded"; // ✅ This now changes from in-progress
-
-      assignedQuiz.status = "completed";
-      assignedQuiz.completedAt = endTime;
-      assignedQuiz.submissionId = submission._id;
-
-      // ✅ NEW: Track all submissions in quizzesTaken array
-      const quizTakenEntry = {
-        quizId: quiz._id,
-        score: submission.score,
-        totalPoints: submission.totalPoints,
-        percentage: submission.percentage,
-        timeTaken: submission.timeTaken,
-        examType: 'multi-subject',
-        questionSets: quiz.questionSets.map(qs => ({
-          questionSetId: qs.questionSetId,
-          title: qs.title
-        })),
-        completedAt: endTime,
-        attemptNumber: submission.attemptNumber || 1,
-      };
-
-      // Add to quizzesTaken array
-      quizTaker.quizzesTaken.push(quizTakenEntry);
-    }
-
-    quizTaker.markModified("assignedQuizzes");
-
-    await submission.save();
-    await quizTaker.save();
-
-    return res.json({
-      success: true,
-      message: isFinalSubmission ? "Quiz submitted successfully" : "Question set submitted successfully",
-      submission: {
-        id: submission._id,
-        questionSetScore: questionSetScore,
-        questionSetTotalPoints: questionSet.totalPoints,
-        overallScore: submission.score,
-        overallTotalPoints: submission.totalPoints,
-        percentage: submission.percentage,
-        timeTaken: submission.timeTaken,
-        status: submission.status,
-        isFinalSubmission: isFinalSubmission || false,
-        attemptNumber: submission.attemptNumber,
-      },
-    });
-  } catch (error) {
-    console.error("Submit quiz error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
   }
+
+  // End session after all retries
+  await session.endSession();
 });
 
 // @route   GET /api/quiztaker/submission/:submissionId
@@ -924,45 +980,62 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
 
     // Include answers if allowed - organized by question set
     if (canViewAnswers) {
-      const answersByQuestionSet = {};
+      const answersByQuestionSet = [];
 
-      submission.answers.forEach((answer) => {
-        // Find which question set this answer belongs to
-        const questionSet = quiz.questionSets.find(qs => 
-          qs.questions.some(q => q._id.toString() === answer.questionId.toString())
-        );
+      // Iterate through ALL question sets in the quiz (regardless of whether answered)
+      for (const questionSet of quiz.questionSets) {
+        const questionSetData = {
+          questionSetTitle: questionSet.title,
+          order: questionSet.order,
+          answers: []
+        };
 
-        if (!questionSet) return;
+        // Get all questions in this question set
+        for (const question of questionSet.questions) {
+          // Find the submitted answer for this question
+          const submittedAnswer = submission.answers.find(
+            ans => ans.questionId.toString() === question._id.toString()
+          );
 
-        if (!answersByQuestionSet[questionSet.order]) {
-          answersByQuestionSet[questionSet.order] = {
-            questionSetTitle: questionSet.title,
-            order: questionSet.order,
-            answers: []
-          };
+          if (submittedAnswer) {
+            // Question was answered
+            questionSetData.answers.push({
+              question: question.question,
+              type: submittedAnswer.questionType,
+              yourAnswer: submittedAnswer.answer,
+              correctAnswer: question.correctAnswer,
+              isCorrect: submittedAnswer.isCorrect,
+              pointsAwarded: submittedAnswer.pointsAwarded,
+              pointsPossible: submittedAnswer.pointsPossible,
+              wasAnswered: true,
+            });
+          } else {
+            // Question was NOT answered - show as unanswered
+            questionSetData.answers.push({
+              question: question.question,
+              type: question.type,
+              yourAnswer: null,
+              correctAnswer: question.correctAnswer,
+              isCorrect: false,
+              pointsAwarded: 0,
+              pointsPossible: question.points,
+              wasAnswered: false, // Flag to indicate this was not answered
+            });
+          }
         }
 
-        const question = questionSet.questions.find(
-          q => q._id.toString() === answer.questionId.toString()
-        );
+        answersByQuestionSet.push(questionSetData);
+      }
 
-        answersByQuestionSet[questionSet.order].answers.push({
-          question: question.question,
-          type: answer.questionType,
-          yourAnswer: answer.answer,
-          correctAnswer: question.correctAnswer,
-          isCorrect: answer.isCorrect,
-          pointsAwarded: answer.pointsAwarded,
-          pointsPossible: answer.pointsPossible,
-        });
-      });
+      // Sort by question set order
+      answersByQuestionSet.sort((a, b) => a.order - b.order);
 
-      responseData.submission.answersByQuestionSet = Object.values(answersByQuestionSet)
-        .sort((a, b) => a.order - b.order);
+      responseData.submission.answersByQuestionSet = answersByQuestionSet;
     }
 
     res.json(responseData);
   } catch (error) {
+    console.error('Submission results error:', error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -970,7 +1043,6 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
     });
   }
 });
-
 // @route   GET /api/quiztaker/my-submissions
 // @desc    Get all submissions from quizzesTaken array
 // @access  Private (Quiz taker only)

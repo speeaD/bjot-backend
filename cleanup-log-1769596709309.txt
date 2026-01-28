@@ -1,0 +1,183 @@
+[2026-01-28T10:38:29.309Z] [INFO] 
+============================================================
+[2026-01-28T10:38:29.311Z] [INFO] QUIZ SUBMISSION CLEANUP SCRIPT
+[2026-01-28T10:38:29.311Z] [INFO] ============================================================
+
+[2026-01-28T10:38:29.311Z] [WARNING] 🚨 RUNNING IN LIVE MODE - CHANGES WILL BE PERMANENT
+[2026-01-28T10:38:29.311Z] [INFO] 
+[2026-01-28T10:38:29.312Z] [INFO] Connecting to MongoDB...
+[2026-01-28T10:38:31.509Z] [SUCCESS] ✅ Connected to MongoDB
+[2026-01-28T10:38:31.510Z] [INFO] 
+[2026-01-28T10:38:31.511Z] [INFO] Creating backup of all in-progress submissions...
+[2026-01-28T10:38:33.785Z] [SUCCESS] ✅ Backup created: ./backups/submissions-backup-1769596713775.json
+[2026-01-28T10:38:33.785Z] [INFO]    Backed up 30 submissions
+[2026-01-28T10:38:33.786Z] [INFO] 
+[2026-01-28T10:38:33.786Z] [INFO] 
+============================================================
+[2026-01-28T10:38:33.786Z] [INFO] PHASE 1: ANALYSIS
+[2026-01-28T10:38:33.786Z] [INFO] ============================================================
+
+[2026-01-28T10:38:33.786Z] [INFO] 🔍 Finding orphaned submissions (no quiz taker)...
+[2026-01-28T10:38:40.288Z] [INFO]    Total orphaned submissions: 0
+[2026-01-28T10:38:40.289Z] [INFO] 
+[2026-01-28T10:38:40.290Z] [INFO] 🔍 Finding duplicate in-progress submissions...
+[2026-01-28T10:38:40.743Z] [INFO]    Found 4 duplicates for key: 6977d4ec8f945060cf0c12db_6977b7d75415be2cd43bad58
+[2026-01-28T10:38:40.743Z] [INFO]    Keeping: 69785a256092999e67c1a477 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.744Z] [INFO]    Marking for deletion: 69785a256092999e67c1a473 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.744Z] [INFO]    Marking for deletion: 69785a25e371fbe7210db696 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.744Z] [INFO]    Marking for deletion: 69785a256092999e67c1a471 (created: Tue Jan 27 2026 07:24:37 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.744Z] [INFO]    Found 2 duplicates for key: 6977d4e78f945060cf0c07ff_6977b7a05415be2cd43ba84c
+[2026-01-28T10:38:40.744Z] [INFO]    Keeping: 697895467478d02849093dd8 (created: Tue Jan 27 2026 11:36:54 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.745Z] [INFO]    Marking for deletion: 697895467478d02849093dd6 (created: Tue Jan 27 2026 11:36:54 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.745Z] [INFO]    Found 2 duplicates for key: 6977d4ca8f945060cf0bcaf9_6977b7a05415be2cd43ba84c
+[2026-01-28T10:38:40.745Z] [INFO]    Keeping: 6978b389c1994844399be837 (created: Tue Jan 27 2026 13:46:01 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.745Z] [INFO]    Marking for deletion: 6978b389c1994844399be835 (created: Tue Jan 27 2026 13:46:01 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.745Z] [INFO]    Found 2 duplicates for key: 6977d52d8f945060cf0c9ae9_6977b7a05415be2cd43ba84c
+[2026-01-28T10:38:40.745Z] [INFO]    Keeping: 6978e56bc7f639db799a4b96 (created: Tue Jan 27 2026 17:18:51 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.746Z] [INFO]    Marking for deletion: 6978e56bc7f639db799a4b94 (created: Tue Jan 27 2026 17:18:51 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.746Z] [INFO]    Found 2 duplicates for key: 6977d4f58f945060cf0c24ef_6977b7a05415be2cd43ba84c
+[2026-01-28T10:38:40.746Z] [INFO]    Keeping: 6978e9e3b102698f2ea55e30 (created: Tue Jan 27 2026 17:37:55 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.746Z] [INFO]    Marking for deletion: 6978e9e3b102698f2ea55e2e (created: Tue Jan 27 2026 17:37:55 GMT+0100 (West Africa Standard Time))
+[2026-01-28T10:38:40.746Z] [INFO]    Total duplicate submissions to remove: 7
+[2026-01-28T10:38:40.746Z] [INFO] 
+[2026-01-28T10:38:40.746Z] [INFO] 🔍 Finding submissions with inconsistent state...
+[2026-01-28T10:38:41.432Z] [INFO]    Found: 6977eacbf3c3329e27887037 - wrong submission ID
+[2026-01-28T10:38:41.622Z] [INFO]    Found: 6978224553edcc56fb5773d5 - wrong submission ID
+[2026-01-28T10:38:41.818Z] [INFO]    Found: 69785a25e371fbe7210db696 - wrong submission ID
+[2026-01-28T10:38:42.011Z] [INFO]    Found: 69785a256092999e67c1a471 - wrong submission ID
+[2026-01-28T10:38:42.203Z] [INFO]    Found: 69785a256092999e67c1a473 - wrong submission ID
+[2026-01-28T10:38:42.403Z] [INFO]    Found: 69785a256092999e67c1a477 - wrong submission ID
+[2026-01-28T10:38:42.592Z] [INFO]    Found: 6978650ee371fbe7210dd70a - wrong submission ID
+[2026-01-28T10:38:42.791Z] [INFO]    Found: 69787e191f80a8e52e89b31a - wrong submission ID
+[2026-01-28T10:38:42.990Z] [INFO]    Found: 697891de1f80a8e52e89f453 - wrong submission ID
+[2026-01-28T10:38:43.191Z] [INFO]    Found: 697895467478d02849093dd6 - wrong submission ID
+[2026-01-28T10:38:43.382Z] [INFO]    Found: 697895467478d02849093dd8 - wrong submission ID
+[2026-01-28T10:38:43.581Z] [INFO]    Found: 697895f4a4e3295471147ce6 - wrong submission ID
+[2026-01-28T10:38:44.172Z] [INFO]    Found: 6978ba6ec98288975c1a0432 - wrong submission ID
+[2026-01-28T10:38:44.363Z] [INFO]    Found: 6978cfaadad5ea9d3c8f0242 - wrong submission ID
+[2026-01-28T10:38:44.572Z] [INFO]    Found: 6978e56bc7f639db799a4b94 - wrong submission ID
+[2026-01-28T10:38:44.762Z] [INFO]    Found: 6978e56bc7f639db799a4b96 - wrong submission ID
+[2026-01-28T10:38:44.979Z] [INFO]    Found: 6978e82887bd00062a7ee651 - wrong submission ID
+[2026-01-28T10:38:45.174Z] [INFO]    Found: 6978e920b102698f2ea55533 - wrong submission ID
+[2026-01-28T10:38:45.372Z] [INFO]    Found: 6978e9e3b102698f2ea55e2e - wrong submission ID
+[2026-01-28T10:38:45.562Z] [INFO]    Found: 6978e9e3b102698f2ea55e30 - wrong submission ID
+[2026-01-28T10:38:45.753Z] [INFO]    Found: 6978ea5387bd00062a7f05be - wrong submission ID
+[2026-01-28T10:38:45.945Z] [INFO]    Found: 6978ecb287bd00062a7f1f34 - wrong submission ID
+[2026-01-28T10:38:46.142Z] [INFO]    Found: 6978f248b102698f2ea5aecf - wrong submission ID
+[2026-01-28T10:38:46.344Z] [INFO]    Found: 6978ff0d68235a312f315ac6 - wrong submission ID
+[2026-01-28T10:38:46.551Z] [INFO]    Found: 697902e068235a312f3180e9 - wrong submission ID
+[2026-01-28T10:38:47.146Z] [INFO]    Total inconsistent submissions: 25
+[2026-01-28T10:38:47.147Z] [INFO] 
+[2026-01-28T10:38:47.147Z] [INFO] 🔍 Finding submissions with duplicate question set entries...
+[2026-01-28T10:38:47.861Z] [INFO]    Found: 6978b389c1994844399be835 - 4 entries, 3 unique
+[2026-01-28T10:38:47.862Z] [INFO]    Found: 6979136b113df95f15c9293a - 3 entries, 2 unique
+[2026-01-28T10:38:47.862Z] [INFO]    Total submissions with duplicate question sets: 2
+[2026-01-28T10:38:47.862Z] [INFO] 
+[2026-01-28T10:38:47.862Z] [INFO] 🔍 Finding stuck submissions (in-progress > 7 days)...
+[2026-01-28T10:38:48.084Z] [INFO]    Total stuck submissions: 0
+[2026-01-28T10:38:48.085Z] [INFO] 
+[2026-01-28T10:38:48.085Z] [INFO] 
+============================================================
+[2026-01-28T10:38:48.086Z] [INFO] ISSUES FOUND
+[2026-01-28T10:38:48.086Z] [INFO] ============================================================
+
+[2026-01-28T10:38:48.086Z] [INFO] Orphaned submissions: 0
+[2026-01-28T10:38:48.086Z] [INFO] Duplicate submissions: 7
+[2026-01-28T10:38:48.087Z] [INFO] Inconsistent submissions: 25
+[2026-01-28T10:38:48.087Z] [INFO] Submissions with duplicate question sets: 2
+[2026-01-28T10:38:48.087Z] [INFO] Stuck submissions (>7 days): 0
+[2026-01-28T10:38:48.087Z] [INFO] 
+[2026-01-28T10:38:48.088Z] [INFO] 
+============================================================
+[2026-01-28T10:38:48.088Z] [INFO] PHASE 2: CLEANUP
+[2026-01-28T10:38:48.088Z] [INFO] ============================================================
+
+[2026-01-28T10:38:48.088Z] [INFO] Cleaning up duplicate submissions...
+[2026-01-28T10:38:48.089Z] [INFO] Deleting submission: 69785a256092999e67c1a473 - Duplicate submission (older)
+[2026-01-28T10:38:48.341Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:48.341Z] [INFO] Deleting submission: 69785a25e371fbe7210db696 - Duplicate submission (older)
+[2026-01-28T10:38:48.556Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:48.557Z] [INFO] Deleting submission: 69785a256092999e67c1a471 - Duplicate submission (older)
+[2026-01-28T10:38:48.754Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:48.755Z] [INFO] Deleting submission: 697895467478d02849093dd6 - Duplicate submission (older)
+[2026-01-28T10:38:48.954Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:48.955Z] [INFO] Deleting submission: 6978b389c1994844399be835 - Duplicate submission (older)
+[2026-01-28T10:38:49.173Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:49.174Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b94 - Duplicate submission (older)
+[2026-01-28T10:38:49.379Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:49.379Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e2e - Duplicate submission (older)
+[2026-01-28T10:38:49.579Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:49.580Z] [INFO] 
+[2026-01-28T10:38:49.580Z] [INFO] Cleaning up inconsistent submissions...
+[2026-01-28T10:38:49.581Z] [INFO] Deleting submission: 6977eacbf3c3329e27887037 - Quiz completed with different submission ID
+[2026-01-28T10:38:49.786Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:49.787Z] [INFO] Deleting submission: 6978224553edcc56fb5773d5 - Quiz completed with different submission ID
+[2026-01-28T10:38:49.991Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:49.992Z] [INFO] Deleting submission: 69785a25e371fbe7210db696 - Quiz completed with different submission ID
+[2026-01-28T10:38:50.182Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:50.182Z] [INFO] Deleting submission: 69785a256092999e67c1a471 - Quiz completed with different submission ID
+[2026-01-28T10:38:50.370Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:50.371Z] [INFO] Deleting submission: 69785a256092999e67c1a473 - Quiz completed with different submission ID
+[2026-01-28T10:38:50.560Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:50.561Z] [INFO] Deleting submission: 69785a256092999e67c1a477 - Quiz completed with different submission ID
+[2026-01-28T10:38:50.754Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:50.755Z] [INFO] Deleting submission: 6978650ee371fbe7210dd70a - Quiz completed with different submission ID
+[2026-01-28T10:38:51.048Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:51.048Z] [INFO] Deleting submission: 69787e191f80a8e52e89b31a - Quiz completed with different submission ID
+[2026-01-28T10:38:51.254Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:51.255Z] [INFO] Deleting submission: 697891de1f80a8e52e89f453 - Quiz completed with different submission ID
+[2026-01-28T10:38:51.454Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:51.455Z] [INFO] Deleting submission: 697895467478d02849093dd6 - Quiz completed with different submission ID
+[2026-01-28T10:38:51.652Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:51.652Z] [INFO] Deleting submission: 697895467478d02849093dd8 - Quiz completed with different submission ID
+[2026-01-28T10:38:51.854Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:51.855Z] [INFO] Deleting submission: 697895f4a4e3295471147ce6 - Quiz completed with different submission ID
+[2026-01-28T10:38:52.054Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:52.054Z] [INFO] Deleting submission: 6978ba6ec98288975c1a0432 - Quiz completed with different submission ID
+[2026-01-28T10:38:52.254Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:52.254Z] [INFO] Deleting submission: 6978cfaadad5ea9d3c8f0242 - Quiz completed with different submission ID
+[2026-01-28T10:38:52.454Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:52.454Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b94 - Quiz completed with different submission ID
+[2026-01-28T10:38:52.650Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:52.650Z] [INFO] Deleting submission: 6978e56bc7f639db799a4b96 - Quiz completed with different submission ID
+[2026-01-28T10:38:52.845Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:52.845Z] [INFO] Deleting submission: 6978e82887bd00062a7ee651 - Quiz completed with different submission ID
+[2026-01-28T10:38:53.054Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:53.055Z] [INFO] Deleting submission: 6978e920b102698f2ea55533 - Quiz completed with different submission ID
+[2026-01-28T10:38:53.254Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:53.255Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e2e - Quiz completed with different submission ID
+[2026-01-28T10:38:53.451Z] [WARNING]    ⚠️  Submission not found
+[2026-01-28T10:38:53.452Z] [INFO] Deleting submission: 6978e9e3b102698f2ea55e30 - Quiz completed with different submission ID
+[2026-01-28T10:38:53.644Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:53.644Z] [INFO] Deleting submission: 6978ea5387bd00062a7f05be - Quiz completed with different submission ID
+[2026-01-28T10:38:53.844Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:53.845Z] [INFO] Deleting submission: 6978ecb287bd00062a7f1f34 - Quiz completed with different submission ID
+[2026-01-28T10:38:54.044Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:54.045Z] [INFO] Deleting submission: 6978f248b102698f2ea5aecf - Quiz completed with different submission ID
+[2026-01-28T10:38:54.255Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:54.255Z] [INFO] Deleting submission: 6978ff0d68235a312f315ac6 - Quiz completed with different submission ID
+[2026-01-28T10:38:54.464Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:54.465Z] [INFO] Deleting submission: 697902e068235a312f3180e9 - Quiz completed with different submission ID
+[2026-01-28T10:38:54.665Z] [SUCCESS]    ✅ Deleted successfully
+[2026-01-28T10:38:54.666Z] [INFO] 
+[2026-01-28T10:38:54.666Z] [INFO] Fixing duplicate question sets...
+[2026-01-28T10:38:54.667Z] [INFO] Fixing duplicate question sets in: 6978b389c1994844399be835
+[2026-01-28T10:38:54.862Z] [WARNING]    Submission not found: 6978b389c1994844399be835
+[2026-01-28T10:38:54.862Z] [INFO] Fixing duplicate question sets in: 6979136b113df95f15c9293a
+[2026-01-28T10:38:55.297Z] [SUCCESS]    ✅ Fixed: reduced from 3 to 2 question sets
+[2026-01-28T10:38:55.297Z] [INFO] 
+[2026-01-28T10:38:55.298Z] [INFO] 
+============================================================
+[2026-01-28T10:38:55.298Z] [INFO] CLEANUP SUMMARY
+[2026-01-28T10:38:55.298Z] [INFO] ============================================================
+
+[2026-01-28T10:38:55.298Z] [INFO] Total issues found: 34
+[2026-01-28T10:38:55.298Z] [INFO] Submissions deleted: 26
+[2026-01-28T10:38:55.298Z] [INFO] Submissions fixed: 1
+[2026-01-28T10:38:55.299Z] [INFO] Errors: 0
+[2026-01-28T10:38:55.299Z] [INFO] 
+[2026-01-28T10:38:55.299Z] [SUCCESS] ✅ CLEANUP COMPLETE
+[2026-01-28T10:38:55.299Z] [INFO]    Log file: ./cleanup-log-1769596709309.txt
+[2026-01-28T10:38:55.299Z] [INFO]    Backup file: check ./backups directory
+[2026-01-28T10:38:55.309Z] [INFO] 
+Disconnected from MongoDB
