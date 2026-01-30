@@ -1,0 +1,567 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================
+// Admin Model
+// =============================================
+model Admin {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique @db.VarChar(255)
+  password  String   @db.VarChar(255)
+  role      String   @default("admin") @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  questionSets     QuestionSet[]
+  quizzes          Quiz[]
+  gradedSubmissions QuizSubmission[] @relation("GradedBy")
+
+  @@index([email])
+  @@map("admins")
+}
+
+// =============================================
+// Question Set Model
+// =============================================
+model QuestionSet {
+  id            String   @id @default(uuid()) @db.Uuid
+  title         String   @db.VarChar(255)
+  totalPoints   Int      @default(0) @map("total_points")
+  questionCount Int      @default(0) @map("question_count")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdById   String   @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy              Admin                    @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  questions              Question[]
+  quizQuestionSets       QuizQuestionSet[]
+  quizTakerQuestionSets  QuizTakerQuestionSet[]
+  cbtQuestionSets        CbtQuestionSet[]
+  gameSessions           GameSession[]
+
+  @@index([isActive])
+  @@index([createdById])
+  @@map("question_sets")
+}
+
+// =============================================
+// Question Model
+// =============================================
+model Question {
+  id             String   @id @default(uuid()) @db.Uuid
+  questionSetId  String   @map("question_set_id") @db.Uuid
+  type           String   @db.VarChar(50)
+  question       String   @db.Text
+  options        Json?    @db.JsonB
+  correctAnswer  Json?    @map("correct_answer") @db.JsonB
+  points         Int      @default(1)
+  orderNum       Int      @map("order_num")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  questionSet      QuestionSet      @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  quizQuestions    QuizQuestion[]
+  gameUsedQuestions GameUsedQuestion[]
+  cbtAnswers       CbtAnswer[]
+
+  @@unique([questionSetId, orderNum], name: "unique_question_order")
+  @@index([questionSetId])
+  @@index([type])
+  @@map("questions")
+}
+
+// =============================================
+// Quiz Model
+// =============================================
+model Quiz {
+  id                String   @id @default(uuid()) @db.Uuid
+  title             String   @db.VarChar(255)
+  coverImage        String?  @map("cover_image") @db.VarChar(500)
+  isQuizChallenge   Boolean  @default(false) @map("is_quiz_challenge")
+  isOpenQuiz        Boolean  @default(false) @map("is_open_quiz")
+  description       String?  @db.Text
+  instructions      String?  @db.Text
+  
+  // Duration
+  durationHours     Int      @default(0) @map("duration_hours")
+  durationMinutes   Int      @default(30) @map("duration_minutes")
+  durationSeconds   Int      @default(0) @map("duration_seconds")
+  
+  // Settings
+  multipleAttempts  Boolean  @default(false) @map("multiple_attempts")
+  looseFocus        Boolean  @default(false) @map("loose_focus")
+  viewAnswer        Boolean  @default(true) @map("view_answer")
+  viewResults       Boolean  @default(true) @map("view_results")
+  displayCalculator Boolean  @default(false) @map("display_calculator")
+  
+  // Metadata
+  totalPoints       Int      @default(0) @map("total_points")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdById       String   @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy         Admin              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  questionSets      QuizQuestionSet[]
+  submissions       QuizSubmission[]
+  assignedQuizzes   AssignedQuiz[]
+  quizHistory       QuizTakenHistory[]
+
+  @@index([isActive])
+  @@index([isQuizChallenge])
+  @@index([createdById])
+  @@map("quizzes")
+}
+
+// =============================================
+// Quiz Question Set (Junction with snapshot)
+// =============================================
+model QuizQuestionSet {
+  id             String   @id @default(uuid()) @db.Uuid
+  quizId         String   @map("quiz_id") @db.Uuid
+  questionSetId  String   @map("question_set_id") @db.Uuid
+  title          String   @db.VarChar(255)
+  orderNum       Int      @map("order_num")
+  totalPoints    Int      @default(0) @map("total_points")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  quiz           Quiz            @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  questionSet    QuestionSet     @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+  questions      QuizQuestion[]
+
+  @@unique([quizId, orderNum], name: "unique_quiz_order")
+  @@unique([quizId, questionSetId], name: "unique_quiz_question_set")
+  @@index([quizId])
+  @@index([questionSetId])
+  @@map("quiz_question_sets")
+}
+
+// =============================================
+// Quiz Question (Snapshot)
+// =============================================
+model QuizQuestion {
+  id                   String   @id @default(uuid()) @db.Uuid
+  quizQuestionSetId    String   @map("quiz_question_set_id") @db.Uuid
+  originalQuestionId   String?  @map("original_question_id") @db.Uuid
+  type                 String   @db.VarChar(50)
+  question             String   @db.Text
+  options              Json?    @db.JsonB
+  correctAnswer        Json?    @map("correct_answer") @db.JsonB
+  points               Int      @default(1)
+  orderNum             Int      @map("order_num")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  // Relations
+  quizQuestionSet      QuizQuestionSet    @relation(fields: [quizQuestionSetId], references: [id], onDelete: Cascade)
+  originalQuestion     Question?          @relation(fields: [originalQuestionId], references: [id], onDelete: SetNull)
+  submissionAnswers    SubmissionAnswer[]
+
+  @@index([quizQuestionSetId])
+  @@map("quiz_questions")
+}
+
+// =============================================
+// Quiz Taker Model
+// =============================================
+model QuizTaker {
+  id           String   @id @default(uuid()) @db.Uuid
+  accountType  String   @map("account_type") @db.VarChar(20)
+  name         String?  @db.VarChar(255)
+  email        String   @db.VarChar(255)
+  accessCode   String?  @unique @map("access_code") @db.VarChar(9)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  questionSets       QuizTakerQuestionSet[]
+  assignedQuizzes    AssignedQuiz[]
+  submissions        QuizSubmission[]
+  cbtSubmissions     CbtSubmission[]
+  quizHistory        QuizTakenHistory[]
+  gameSessions       GameSession[]
+
+  @@index([email, accountType])
+  @@map("quiz_takers")
+}
+
+// =============================================
+// Quiz Taker Question Sets
+// =============================================
+model QuizTakerQuestionSet {
+  id             String      @id @default(uuid()) @db.Uuid
+  quizTakerId    String      @map("quiz_taker_id") @db.Uuid
+  questionSetId  String      @map("question_set_id") @db.Uuid
+  assignedAt     DateTime    @default(now()) @map("assigned_at")
+
+  // Relations
+  quizTaker      QuizTaker   @relation(fields: [quizTakerId], references: [id], onDelete: Cascade)
+  questionSet    QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+
+  @@unique([quizTakerId, questionSetId], name: "unique_taker_qs")
+  @@index([quizTakerId])
+  @@map("quiz_taker_question_sets")
+}
+
+// =============================================
+// Assigned Quiz Model
+// =============================================
+model AssignedQuiz {
+  id                        String   @id @default(uuid()) @db.Uuid
+  quizTakerId               String   @map("quiz_taker_id") @db.Uuid
+  quizId                    String   @map("quiz_id") @db.Uuid
+  status                    String   @default("pending") @db.VarChar(20)
+  currentQuestionSetOrder   Int?     @map("current_question_set_order")
+  assignedAt                DateTime @default(now()) @map("assigned_at")
+  startedAt                 DateTime? @map("started_at")
+  completedAt               DateTime? @map("completed_at")
+
+  // Relations
+  quizTaker                 QuizTaker              @relation(fields: [quizTakerId], references: [id], onDelete: Cascade)
+  quiz                      Quiz                   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  questionSetOrder          QuestionSetOrder[]
+  questionSetProgress       QuestionSetProgress[]
+  submissions               QuizSubmission[]
+
+  @@unique([quizTakerId, quizId], name: "unique_taker_quiz")
+  @@index([quizTakerId])
+  @@index([status])
+  @@map("assigned_quizzes")
+}
+
+// =============================================
+// Question Set Order
+// =============================================
+model QuestionSetOrder {
+  id              String       @id @default(uuid()) @db.Uuid
+  assignedQuizId  String       @map("assigned_quiz_id") @db.Uuid
+  position        Int
+  orderValue      Int          @map("order_value")
+
+  // Relations
+  assignedQuiz    AssignedQuiz @relation(fields: [assignedQuizId], references: [id], onDelete: Cascade)
+
+  @@unique([assignedQuizId, position], name: "unique_assignment_position")
+  @@map("question_set_order")
+}
+
+// =============================================
+// Question Set Progress
+// =============================================
+model QuestionSetProgress {
+  id                  String       @id @default(uuid()) @db.Uuid
+  assignedQuizId      String       @map("assigned_quiz_id") @db.Uuid
+  questionSetOrder    Int          @map("question_set_order")
+  selectedOrder       Int?         @map("selected_order")
+  status              String       @default("not-started") @db.VarChar(20)
+  score               Int          @default(0)
+  totalPoints         Int          @default(0) @map("total_points")
+  startedAt           DateTime?    @map("started_at")
+  completedAt         DateTime?    @map("completed_at")
+
+  // Relations
+  assignedQuiz        AssignedQuiz @relation(fields: [assignedQuizId], references: [id], onDelete: Cascade)
+
+  @@unique([assignedQuizId, questionSetOrder], name: "unique_assignment_qs_order")
+  @@index([assignedQuizId])
+  @@map("question_set_progress")
+}
+
+// =============================================
+// Quiz Submission Model
+// =============================================
+model QuizSubmission {
+  id              String    @id @default(uuid()) @db.Uuid
+  quizId          String    @map("quiz_id") @db.Uuid
+  quizTakerId     String    @map("quiz_taker_id") @db.Uuid
+  assignedQuizId  String?   @map("assigned_quiz_id") @db.Uuid
+  status          String    @default("in-progress") @db.VarChar(30)
+  score           Int       @default(0)
+  totalPoints     Int       @map("total_points")
+  percentage      Decimal   @default(0) @db.Decimal(5, 2)
+  timeTaken       Int       @map("time_taken")
+  feedback        String?   @db.Text
+  gradedById      String?   @map("graded_by") @db.Uuid
+  gradedAt        DateTime? @map("graded_at")
+  startedAt       DateTime  @map("started_at")
+  submittedAt     DateTime  @map("submitted_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  quiz                      Quiz                         @relation(fields: [quizId], references: [id], onDelete: Restrict)
+  quizTaker                 QuizTaker                    @relation(fields: [quizTakerId], references: [id], onDelete: Restrict)
+  assignedQuiz              AssignedQuiz?                @relation(fields: [assignedQuizId], references: [id], onDelete: SetNull)
+  gradedBy                  Admin?                       @relation("GradedBy", fields: [gradedById], references: [id], onDelete: SetNull)
+  answers                   SubmissionAnswer[]
+  questionSetSubmissions    QuestionSetSubmission[]
+  questionSetOrder          SubmissionQuestionSetOrder[]
+  quizHistory               QuizTakenHistory[]
+
+  // Note: Partial unique index for in-progress submissions must be created manually
+  // Run this SQL after migration: 
+  // CREATE UNIQUE INDEX idx_unique_in_progress_submission 
+  // ON quiz_submissions(quiz_id, quiz_taker_id) 
+  // WHERE status = 'in-progress';
+
+  @@index([quizId])
+  @@index([quizTakerId])
+  @@index([status])
+  @@index([quizId, quizTakerId, status])
+  @@map("quiz_submissions")
+}
+
+// =============================================
+// Submission Answer
+// =============================================
+model SubmissionAnswer {
+  id                String         @id @default(uuid()) @db.Uuid
+  submissionId      String         @map("submission_id") @db.Uuid
+  quizQuestionId    String         @map("quiz_question_id") @db.Uuid
+  questionSetOrder  Int            @map("question_set_order")
+  questionType      String         @map("question_type") @db.VarChar(50)
+  answer            Json?          @db.JsonB
+  isCorrect         Boolean?       @map("is_correct")
+  pointsAwarded     Int            @default(0) @map("points_awarded")
+  pointsPossible    Int            @map("points_possible")
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  // Relations
+  submission        QuizSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  quizQuestion      QuizQuestion   @relation(fields: [quizQuestionId], references: [id], onDelete: Restrict)
+
+  @@index([submissionId])
+  @@index([quizQuestionId])
+  @@map("submission_answers")
+}
+
+// =============================================
+// Question Set Submission
+// =============================================
+model QuestionSetSubmission {
+  id                String         @id @default(uuid()) @db.Uuid
+  quizSubmissionId  String         @map("quiz_submission_id") @db.Uuid
+  questionSetOrder  Int            @map("question_set_order")
+  orderAnswered     Int?           @map("order_answered")
+  score             Int            @default(0)
+  totalPoints       Int            @map("total_points")
+  percentage        Decimal        @default(0) @db.Decimal(5, 2)
+  submittedAt       DateTime       @map("submitted_at")
+
+  // Relations
+  quizSubmission    QuizSubmission @relation(fields: [quizSubmissionId], references: [id], onDelete: Cascade)
+
+  @@unique([quizSubmissionId, questionSetOrder], name: "unique_submission_qs_order")
+  @@index([quizSubmissionId])
+  @@map("question_set_submissions")
+}
+
+// =============================================
+// Submission Question Set Order
+// =============================================
+model SubmissionQuestionSetOrder {
+  id               String         @id @default(uuid()) @db.Uuid
+  quizSubmissionId String         @map("quiz_submission_id") @db.Uuid
+  position         Int
+  orderValue       Int            @map("order_value")
+
+  // Relations
+  quizSubmission   QuizSubmission @relation(fields: [quizSubmissionId], references: [id], onDelete: Cascade)
+
+  @@unique([quizSubmissionId, position], name: "unique_submission_position")
+  @@map("submission_question_set_order")
+}
+
+// =============================================
+// CBT Submission
+// =============================================
+model CbtSubmission {
+  id           String    @id @default(uuid()) @db.Uuid
+  quizTakerId  String    @map("quiz_taker_id") @db.Uuid
+  score        Int       @default(0)
+  totalPoints  Int       @default(0) @map("total_points")
+  percentage   Decimal   @default(0) @db.Decimal(5, 2)
+  timeTaken    Int       @default(0) @map("time_taken")
+  startedAt    DateTime  @map("started_at")
+  submittedAt  DateTime? @map("submitted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  quizTaker       QuizTaker         @relation(fields: [quizTakerId], references: [id], onDelete: Restrict)
+  questionSets    CbtQuestionSet[]
+  answers         CbtAnswer[]
+
+  @@index([quizTakerId])
+  @@map("cbt_submissions")
+}
+
+// =============================================
+// CBT Question Set
+// =============================================
+model CbtQuestionSet {
+  id              String        @id @default(uuid()) @db.Uuid
+  cbtSubmissionId String        @map("cbt_submission_id") @db.Uuid
+  questionSetId   String        @map("question_set_id") @db.Uuid
+  title           String        @db.VarChar(255)
+  orderNum        Int           @map("order_num")
+
+  // Relations
+  cbtSubmission   CbtSubmission @relation(fields: [cbtSubmissionId], references: [id], onDelete: Cascade)
+  questionSet     QuestionSet   @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+
+  @@index([cbtSubmissionId])
+  @@map("cbt_question_sets")
+}
+
+// =============================================
+// CBT Answer
+// =============================================
+model CbtAnswer {
+  id              String        @id @default(uuid()) @db.Uuid
+  cbtSubmissionId String        @map("cbt_submission_id") @db.Uuid
+  questionId      String?       @map("question_id") @db.Uuid
+  questionSetId   String?       @map("question_set_id") @db.Uuid
+  answer          Json?         @db.JsonB
+  isCorrect       Boolean?      @map("is_correct")
+  pointsAwarded   Int           @default(0) @map("points_awarded")
+  pointsPossible  Int           @map("points_possible")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  // Relations
+  cbtSubmission   CbtSubmission @relation(fields: [cbtSubmissionId], references: [id], onDelete: Cascade)
+  question        Question?     @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  @@index([cbtSubmissionId])
+  @@map("cbt_answers")
+}
+
+// =============================================
+// Quiz Taken History
+// =============================================
+model QuizTakenHistory {
+  id           String    @id @default(uuid()) @db.Uuid
+  quizTakerId  String    @map("quiz_taker_id") @db.Uuid
+  quizId       String?   @map("quiz_id") @db.Uuid
+  submissionId String?   @map("submission_id") @db.Uuid
+  examType     String?   @map("exam_type") @db.VarChar(20)
+  score        Int       @default(0)
+  totalPoints  Int       @default(0) @map("total_points")
+  percentage   Decimal   @default(0) @db.Decimal(5, 2)
+  timeTaken    Int       @default(0) @map("time_taken")
+  completedAt  DateTime  @default(now()) @map("completed_at")
+
+  // Relations
+  quizTaker        QuizTaker                 @relation(fields: [quizTakerId], references: [id], onDelete: Cascade)
+  quiz             Quiz?                     @relation(fields: [quizId], references: [id], onDelete: SetNull)
+  submission       QuizSubmission?           @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+  questionSets     QuizHistoryQuestionSet[]
+
+  @@index([quizTakerId])
+  @@map("quiz_taken_history")
+}
+
+// =============================================
+// Quiz History Question Sets
+// =============================================
+model QuizHistoryQuestionSet {
+  id             String           @id @default(uuid()) @db.Uuid
+  quizHistoryId  String           @map("quiz_history_id") @db.Uuid
+  questionSetId  String?          @map("question_set_id") @db.Uuid
+  title          String?          @db.VarChar(255)
+
+  // Relations
+  quizHistory    QuizTakenHistory @relation(fields: [quizHistoryId], references: [id], onDelete: Cascade)
+
+  @@map("quiz_history_question_sets")
+}
+
+// =============================================
+// Game Session
+// =============================================
+model GameSession {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  gameType          String    @default("scholars-wager") @map("game_type") @db.VarChar(50)
+  questionSetId     String    @map("question_set_id") @db.Uuid
+  subject           String    @db.VarChar(255)
+  currentScore      Int       @default(100) @map("current_score")
+  goalScore         Int       @default(1000) @map("goal_score")
+  questionsAnswered Int       @default(0) @map("questions_answered")
+  correctAnswers    Int       @default(0) @map("correct_answers")
+  status            String    @default("active") @db.VarChar(20)
+  duration          Int?
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user              QuizTaker           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionSet       QuestionSet         @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+  usedQuestions     GameUsedQuestion[]
+  history           GameHistory[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([subject])
+  @@map("game_sessions")
+}
+
+// =============================================
+// Game Used Question
+// =============================================
+model GameUsedQuestion {
+  id            String      @id @default(uuid()) @db.Uuid
+  gameSessionId String      @map("game_session_id") @db.Uuid
+  questionId    String      @map("question_id") @db.Uuid
+
+  // Relations
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  question      Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([gameSessionId, questionId], name: "unique_game_question")
+  @@index([gameSessionId])
+  @@map("game_used_questions")
+}
+
+// =============================================
+// Game History
+// =============================================
+model GameHistory {
+  id             String      @id @default(uuid()) @db.Uuid
+  gameSessionId  String      @map("game_session_id") @db.Uuid
+  questionId     String      @map("question_id") @db.Uuid
+  question       String      @db.Text
+  selectedAnswer String      @map("selected_answer") @db.VarChar(500)
+  correctAnswer  Json        @map("correct_answer") @db.JsonB
+  wager          Int
+  isCorrect      Boolean     @map("is_correct")
+  pointsChange   Int         @map("points_change")
+  timestamp      DateTime    @default(now())
+
+  // Relations
+  gameSession    GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+
+  @@index([gameSessionId])
+  @@map("game_history")
+}

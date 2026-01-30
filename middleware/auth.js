@@ -1,93 +1,102 @@
 const jwt = require('jsonwebtoken');
-const Admin = require('../models/Admin');
-const QuizTaker = require('../models/QuizTaker');
+const prisma = require('../utils/database');
 
-// Verify Admin Token
+// Verify Admin
 exports.verifyAdmin = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Access denied. No token provided.' 
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided',
       });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     if (decoded.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. Admin only.' 
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin only.',
       });
     }
 
-    const admin = await Admin.findById(decoded.id).select('-password');
-    
+    const admin = await prisma.admin.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, role: true },
+    });
+
     if (!admin) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token',
       });
     }
 
     req.admin = admin;
     next();
   } catch (error) {
-    res.status(401).json({ 
-      success: false, 
-      message: 'Unauthorized', 
-      error: error.message 
+    res.status(401).json({
+      success: false,
+      message: 'Invalid token',
+      error: error.message,
     });
   }
 };
 
-// Verify QuizTaker Token
+// Verify Quiz Taker
 exports.verifyQuizTaker = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
+
     if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Access denied. No token provided.' 
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided',
       });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
+
     if (decoded.role !== 'quiztaker') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. Quiz taker only.' 
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Quiz taker only.',
       });
     }
 
-    const quizTaker = await QuizTaker.findById(decoded.id).select('-password');
-    
+    const quizTaker = await prisma.quizTaker.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        accountType: true,
+        isActive: true,
+      },
+    });
+
     if (!quizTaker) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized' 
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token',
       });
     }
 
     if (!quizTaker.isActive) {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Account is inactive. Contact admin.' 
+      return res.status(403).json({
+        success: false,
+        message: 'Account is inactive',
       });
     }
 
     req.quizTaker = quizTaker;
-    next(); // ✅ This looks correct
+    next();
   } catch (error) {
-    console.error('Verify quiz taker error:', error);
-    return res.status(401).json({  // ✅ Added return here
-      success: false, 
-      message: 'Unauthorized', 
-      error: error.message 
+    res.status(401).json({
+      success: false,
+      message: 'Invalid token',
+      error: error.message,
     });
   }
 };
