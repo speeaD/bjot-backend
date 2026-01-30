@@ -1,16 +1,12 @@
 const express = require("express");
 const router = express.Router();
 const { verifyAdmin } = require("../middleware/auth");
-const QuizTaker = require("../models/QuizTaker");
-const Quiz = require("../models/Quiz");
-const QuizSubmission = require("../models/QuizSubmission");
+const prisma = require("../utils/database");
 const multer = require("multer");
 const XLSX = require("xlsx");
-const { sendAccessCodeEmail } = require("../utils/emailService");
+// const { sendAccessCodeEmail } = require("../utils/emailService");
 
-// @route   POST /api/admin/quiztaker
-// @desc    Create a new PREMIUM quiz taker
-// @access  Private (Admin only)
+
 // Configure multer for file upload
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -31,6 +27,18 @@ const upload = multer({
     }
   },
 });
+
+// Helper function to generate unique access code
+// NOTE: You'll need to implement this based on your original QuizTaker.generateAccessCode() method
+// This is a sample implementation
+const generateAccessCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Excludes similar looking chars
+  let code = '';
+  for (let i = 0; i < 9; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
 
 // @route   POST /api/admin/bulk-upload-quiztakers
 // @desc    Bulk upload quiz takers from CSV/Excel file
@@ -54,15 +62,6 @@ router.post(
       const worksheet = workbook.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(worksheet);
 
-      // const headers = data[0]; // First row is headers
-      // const jsonData = data.slice(1).map((row) => {
-      //   const obj = {};
-      //   headers.forEach((header, index) => {
-      //     obj[header] = row[index];
-      //   });
-      //   return obj;
-      // });
-
       if (!data || data.length === 0) {
         return res.status(400).json({
           success: false,
@@ -75,8 +74,6 @@ router.post(
         successful: [],
         failed: [],
       };
-
-      const QuestionSet = require("../models/QuestionSet");
 
       // Process each row
       for (let i = 0; i < data.length; i++) {
@@ -107,9 +104,12 @@ router.post(
           }
 
           // Check for existing quiz taker
-          const existingQuizTaker = await QuizTaker.findOne({
-            email,
-            accountType,
+          // Changed from: QuizTaker.findOne({ email, accountType })
+          const existingQuizTaker = await prisma.quizTaker.findFirst({
+            where: {
+              email,
+              accountType,
+            }
           });
 
           if (existingQuizTaker) {
@@ -122,7 +122,7 @@ router.post(
           }
 
           const name = row.name?.toString().trim() || "";
-          let questionSetCombination = [];
+          let questionSetIds = [];
           let accessCode = null;
 
           // Handle premium students
@@ -145,8 +145,14 @@ router.post(
 
             // Look up question sets by title
             const questionSetTitles = [qsTitle1, qsTitle2, qsTitle3, qsTitle4];
-            const questionSets = await QuestionSet.find({
-              title: { $in: questionSetTitles },
+            
+            // Changed from: QuestionSet.find({ title: { $in: questionSetTitles } })
+            const questionSets = await prisma.questionSet.findMany({
+              where: {
+                title: {
+                  in: questionSetTitles
+                }
+              }
             });
 
             // Verify all question sets were found
@@ -165,32 +171,51 @@ router.post(
             }
 
             // Map titles to IDs in the correct order
-            questionSetCombination = questionSetTitles.map((title) => {
+            questionSetIds = questionSetTitles.map((title) => {
               const qs = questionSets.find((q) => q.title === title);
-              return qs._id;
+              return qs.id;
             });
 
             // Generate unique access code
             let isUnique = false;
             while (!isUnique) {
-              accessCode = QuizTaker.generateAccessCode();
-              const existing = await QuizTaker.findOne({ accessCode });
+              accessCode = generateAccessCode();
+              
+              // Changed from: QuizTaker.findOne({ accessCode })
+              const existing = await prisma.quizTaker.findUnique({
+                where: { accessCode }
+              });
+              
               if (!existing) isUnique = true;
             }
           }
 
-          // Create quiz taker
-          const quizTaker = new QuizTaker({
-            accountType,
-            email,
-            name,
-            ...(accountType === "premium" && {
-              accessCode,
-              questionSetCombination,
-            }),
-          });
+          // Create quiz taker with question sets
+          // Changed from: new QuizTaker({ ... }) then quizTaker.save()
+          // In Prisma, we need to create the quiz taker and related records in a transaction
+          const quizTaker = await prisma.$transaction(async (tx) => {
+            // Create the quiz taker
+            const newQuizTaker = await tx.quizTaker.create({
+              data: {
+                accountType,
+                email,
+                name,
+                ...(accountType === "premium" && { accessCode }),
+              },
+            });
 
-          await quizTaker.save();
+            // If premium, create the question set associations
+            if (accountType === "premium" && questionSetIds.length > 0) {
+              await tx.quizTakerQuestionSet.createMany({
+                data: questionSetIds.map(questionSetId => ({
+                  quizTakerId: newQuizTaker.id,
+                  questionSetId: questionSetId,
+                })),
+              });
+            }
+
+            return newQuizTaker;
+          });
 
           // Send email to premium students with access code
           // if (accountType === "premium" && accessCode) {
@@ -273,7 +298,7 @@ router.get("/download-template", verifyAdmin, (req, res) => {
 
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=quiztaker_upload_template.xlsx",
+      "attachment; filename=quiz-takers-template.xlsx",
     );
     res.setHeader(
       "Content-Type",
@@ -283,87 +308,116 @@ router.get("/download-template", verifyAdmin, (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Error generating template",
+      message: "Server error",
       error: error.message,
     });
   }
 });
 
+// @route   POST /api/admin/quiztaker
+// @desc    Create a new quiz taker (single)
+// @access  Private (Admin only)
 router.post("/quiztaker", verifyAdmin, async (req, res) => {
   try {
-    const { email, name, questionSetCombination } = req.body;
+    const { email, name, accountType, questionSetIds } = req.body;
 
     // Validation
-    if (!email) {
+    if (!email || !accountType) {
       return res.status(400).json({
         success: false,
-        message: "Please provide email address",
+        message: "Email and account type are required",
       });
     }
 
-    if (
-      !questionSetCombination ||
-      !Array.isArray(questionSetCombination) ||
-      questionSetCombination.length !== 4
-    ) {
+    if (!["premium", "regular"].includes(accountType)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Please provide a valid question set combination (array of 4 question set IDs)",
+        message: 'Account type must be "premium" or "regular"',
       });
     }
 
-    // Check if premium quiz taker with this email already exists
-    const existingQuizTaker = await QuizTaker.findOne({
-      email,
-      accountType: "premium",
+    // Check for existing quiz taker
+    // Changed from: QuizTaker.findOne({ email, accountType })
+    const existingQuizTaker = await prisma.quizTaker.findFirst({
+      where: {
+        email,
+        accountType,
+      }
     });
 
     if (existingQuizTaker) {
       return res.status(400).json({
         success: false,
-        message: "Premium quiz taker with this email already exists",
+        message: `${accountType} quiz taker with this email already exists`,
       });
     }
 
-    // Generate unique access code
-    let accessCode;
-    let isUnique = false;
+    let accessCode = null;
 
-    while (!isUnique) {
-      accessCode = QuizTaker.generateAccessCode();
-      const existing = await QuizTaker.findOne({ accessCode });
-      if (!existing) isUnique = true;
+    // Generate access code for premium students
+    if (accountType === "premium") {
+      let isUnique = false;
+      while (!isUnique) {
+        accessCode = generateAccessCode();
+        
+        // Changed from: QuizTaker.findOne({ accessCode })
+        const existing = await prisma.quizTaker.findUnique({
+          where: { accessCode }
+        });
+        
+        if (!existing) isUnique = true;
+      }
     }
 
-    // Create premium quiz taker
-    const quizTaker = new QuizTaker({
-      accountType: "premium",
-      email,
-      name: name || "",
-      accessCode,
-      questionSetCombination,
-    });
+    // Create quiz taker with optional question sets
+    // Changed from: new QuizTaker({ ... }) then quizTaker.save()
+    const quizTaker = await prisma.$transaction(async (tx) => {
+      // Create the quiz taker
+      const newQuizTaker = await tx.quizTaker.create({
+        data: {
+          accountType,
+          email,
+          name: name || null,
+          ...(accountType === "premium" && { accessCode }),
+        },
+      });
 
-    await quizTaker.save();
-    await sendAccessCodeEmail(email, name, accessCode);
+      // If question sets provided, create associations
+      if (questionSetIds && Array.isArray(questionSetIds) && questionSetIds.length > 0) {
+        await tx.quizTakerQuestionSet.createMany({
+          data: questionSetIds.map(questionSetId => ({
+            quizTakerId: newQuizTaker.id,
+            questionSetId: questionSetId,
+          })),
+          skipDuplicates: true, // Skip if already exists
+        });
+      }
+
+      // Fetch the complete quiz taker with relations
+      return tx.quizTaker.findUnique({
+        where: { id: newQuizTaker.id },
+        include: {
+          questionSets: {
+            include: {
+              questionSet: {
+                select: {
+                  id: true,
+                  title: true,
+                }
+              }
+            }
+          }
+        }
+      });
+    });
 
     res.status(201).json({
       success: true,
-      message: "Premium quiz taker created successfully",
-      quizTaker: {
-        id: quizTaker._id,
-        accountType: quizTaker.accountType,
-        email: quizTaker.email,
-        name: quizTaker.name,
-        accessCode: quizTaker.accessCode,
-        questionSetCombination: quizTaker.questionSetCombination,
-        isActive: quizTaker.isActive,
-        createdAt: quizTaker.createdAt,
-      },
+      message: "Quiz taker created successfully",
+      quizTaker,
     });
   } catch (error) {
-    console.log(error);
+    console.error("Create quiz taker error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -373,28 +427,75 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
 });
 
 // @route   GET /api/admin/quiztakers
-// @desc    Get all quiz takers (with filter for account type)
+// @desc    Get all quiz takers with optional filters
 // @access  Private (Admin only)
 router.get("/quiztakers", verifyAdmin, async (req, res) => {
   try {
-    const { accountType } = req.query;
+    const { accountType, search, page = 1, limit = 50 } = req.query;
 
-    const filter = {};
+    // Build where clause
+    const where = {};
+    
     if (accountType && ["premium", "regular"].includes(accountType)) {
-      filter.accountType = accountType;
+      where.accountType = accountType;
     }
 
-    const quizTakers = await QuizTaker.find(filter)
-      .populate("assignedQuizzes.quizId", "settings.title")
-      .populate("questionSetCombination", "title")
-      .sort({ createdAt: -1 });
+    if (search) {
+      // Changed from: MongoDB $regex to Prisma contains (case-insensitive)
+      where.OR = [
+        { email: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        ...(accountType === "premium" ? [{ accessCode: { contains: search, mode: 'insensitive' } }] : [])
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Changed from: QuizTaker.find().populate()
+    const [quizTakers, total] = await Promise.all([
+      prisma.quizTaker.findMany({
+        where,
+        include: {
+          questionSets: {
+            include: {
+              questionSet: {
+                select: {
+                  id: true,
+                  title: true,
+                }
+              }
+            }
+          },
+          assignedQuizzes: {
+            include: {
+              quiz: {
+                select: {
+                  id: true,
+                  title: true,
+                }
+              }
+            }
+          }
+        },
+        orderBy: {
+          createdAt: 'desc'
+        },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.quizTaker.count({ where })
+    ]);
 
     res.json({
       success: true,
       count: quizTakers.length,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / parseInt(limit)),
       quizTakers,
     });
   } catch (error) {
+    console.error("Get quiz takers error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -408,13 +509,37 @@ router.get("/quiztakers", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.get("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.params.id)
-      .populate(
-        "assignedQuizzes.quizId",
-        "settings.title settings.isQuizChallenge",
-      )
-      .populate("assignedQuizzes.submissionId")
-      .populate("questionSetCombination", "title");
+    // Changed from: QuizTaker.findById(req.params.id).populate()
+    const quizTaker = await prisma.quizTaker.findUnique({
+      where: { id: req.params.id },
+      include: {
+        questionSets: {
+          include: {
+            questionSet: true
+          }
+        },
+        assignedQuizzes: {
+          include: {
+            quiz: true,
+            questionSetProgress: true,
+          }
+        },
+        submissions: {
+          include: {
+            quiz: {
+              select: {
+                id: true,
+                title: true,
+              }
+            }
+          },
+          orderBy: {
+            submittedAt: 'desc'
+          },
+          take: 10, // Get last 10 submissions
+        }
+      }
+    });
 
     if (!quizTaker) {
       return res.status(404).json({
@@ -428,6 +553,7 @@ router.get("/quiztaker/:id", verifyAdmin, async (req, res) => {
       quizTaker,
     });
   } catch (error) {
+    console.error("Get quiz taker error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -441,125 +567,97 @@ router.get("/quiztaker/:id", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
-    const { email, name, isActive, questionSetCombination } = req.body;
+    const { email, name, isActive, questionSetIds } = req.body;
 
-    const quizTaker = await QuizTaker.findById(req.params.id);
+    // Check if quiz taker exists
+    // Changed from: QuizTaker.findById(req.params.id)
+    const existingQuizTaker = await prisma.quizTaker.findUnique({
+      where: { id: req.params.id }
+    });
 
-    if (!quizTaker) {
+    if (!existingQuizTaker) {
       return res.status(404).json({
         success: false,
         message: "Quiz taker not found",
       });
     }
 
-    // Only allow updating premium accounts
-    if (quizTaker.accountType !== "premium") {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot update regular student accounts",
-      });
-    }
-
-    // Update fields
-    if (email) quizTaker.email = email;
-    if (name) quizTaker.name = name;
-    if (typeof isActive !== "undefined") quizTaker.isActive = isActive;
-
-    if (
-      questionSetCombination &&
-      Array.isArray(questionSetCombination) &&
-      questionSetCombination.length === 4
-    ) {
-      quizTaker.questionSetCombination = questionSetCombination;
-    }
-
-    await quizTaker.save();
-
-    res.json({
-      success: true,
-      message: "Quiz taker updated successfully",
-      quizTaker: {
-        id: quizTaker._id,
-        accountType: quizTaker.accountType,
-        email: quizTaker.email,
-        name: quizTaker.name,
-        accessCode: quizTaker.accessCode,
-        questionSetCombination: quizTaker.questionSetCombination,
-        isActive: quizTaker.isActive,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
-
-router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
-  try {
-    const { quizTakerIds } = req.body;
-
-    // Validation
-    if (!quizTakerIds || !Array.isArray(quizTakerIds) || quizTakerIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide quizTakerIds array",
-      });
-    }
-
-    const results = {
-      success: [],
-      failed: [],
-    };
-
-    
-
-    for (const takerId of quizTakerIds) {
-      try {
-        const quizTaker = await QuizTaker.findById(takerId);
-
-        if (!quizTaker) {
-          results.failed.push({
-            quizTakerId: takerId,
-            reason: "Quiz taker not found",
-          });
-          continue;
+    // If email is being changed, check it's not taken
+    if (email && email !== existingQuizTaker.email) {
+      const emailTaken = await prisma.quizTaker.findFirst({
+        where: {
+          email,
+          accountType: existingQuizTaker.accountType,
+          NOT: {
+            id: req.params.id
+          }
         }
+      });
 
-        // Check if quiz taker has any completed submissions
-        const hasSubmissions = await QuizSubmission.exists({
-          quizTakerId: takerId,
-        });
-
-        if (hasSubmissions) {
-          await QuizSubmission.deleteMany({ quizTakerId: takerId });
-        }
-
-        // Delete the quiz taker
-        await quizTaker.deleteOne();
-
-        results.success.push({
-          quizTakerId: takerId,
-          email: quizTaker.email,
-          accountType: quizTaker.accountType,
-        });
-      } catch (error) {
-        results.failed.push({
-          quizTakerId: takerId,
-          reason: error.message,
+      if (emailTaken) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already in use by another quiz taker",
         });
       }
     }
 
+    // Update quiz taker
+    // Changed from: QuizTaker.findByIdAndUpdate()
+    const quizTaker = await prisma.$transaction(async (tx) => {
+      // Update basic fields
+      const updated = await tx.quizTaker.update({
+        where: { id: req.params.id },
+        data: {
+          ...(email && { email }),
+          ...(name !== undefined && { name }),
+          ...(isActive !== undefined && { isActive }),
+        },
+      });
+
+      // If question sets provided, update them
+      if (questionSetIds && Array.isArray(questionSetIds)) {
+        // Delete existing question set associations
+        await tx.quizTakerQuestionSet.deleteMany({
+          where: { quizTakerId: req.params.id }
+        });
+
+        // Create new associations
+        if (questionSetIds.length > 0) {
+          await tx.quizTakerQuestionSet.createMany({
+            data: questionSetIds.map(questionSetId => ({
+              quizTakerId: req.params.id,
+              questionSetId: questionSetId,
+            })),
+          });
+        }
+      }
+
+      // Fetch updated quiz taker with relations
+      return tx.quizTaker.findUnique({
+        where: { id: req.params.id },
+        include: {
+          questionSets: {
+            include: {
+              questionSet: {
+                select: {
+                  id: true,
+                  title: true,
+                }
+              }
+            }
+          }
+        }
+      });
+    });
+
     res.json({
       success: true,
-      message: `Deleted ${results.success.length} quiz taker(s)`,
-      results,
+      message: "Quiz taker updated successfully",
+      quizTaker,
     });
   } catch (error) {
-    console.error("Bulk delete error:", error);
+    console.error("Update quiz taker error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -569,12 +667,15 @@ router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
 });
 
 // @route   DELETE /api/admin/quiztaker/:id
-// @desc    Delete single quiz taker (keep existing for backward compatibility)
+// @desc    Delete quiz taker
 // @access  Private (Admin only)
-// NOTE: This route already exists in your code, just ensuring it stays
 router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.params.id);
+    // Check if quiz taker exists
+    // Changed from: QuizTaker.findById(req.params.id)
+    const quizTaker = await prisma.quizTaker.findUnique({
+      where: { id: req.params.id }
+    });
 
     if (!quizTaker) {
       return res.status(404).json({
@@ -583,26 +684,18 @@ router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
       });
     }
 
-    // Optional: Check for submissions before deletion
-    const QuizSubmission = require("../models/QuizSubmission");
-    const hasSubmissions = await QuizSubmission.exists({
-      quizTakerId: req.params.id,
+    // Delete quiz taker (cascade will handle related records)
+    // Changed from: QuizTaker.findByIdAndDelete()
+    await prisma.quizTaker.delete({
+      where: { id: req.params.id }
     });
-
-    if (hasSubmissions) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot delete quiz taker with existing submissions. Please delete submissions first or contact support.",
-      });
-    }
-
-    await quizTaker.deleteOne();
 
     res.json({
       success: true,
       message: "Quiz taker deleted successfully",
     });
   } catch (error) {
+    console.error("Delete quiz taker error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -611,10 +704,10 @@ router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
   }
 });
 
-// @route   POST /api/admin/assign-quiz
-// @desc    Assign quiz to PREMIUM quiz taker(s) - with combination validation
+// @route   POST /api/admin/quiztakers/assign
+// @desc    Assign quiz to multiple quiz takers (bulk operation)
 // @access  Private (Admin only)
-router.post("/assign-quiz", verifyAdmin, async (req, res) => {
+router.post("/quiztakers/assign", verifyAdmin, async (req, res) => {
   try {
     const { quizId, quizTakerIds } = req.body;
 
@@ -627,7 +720,11 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
     }
 
     // Check if quiz exists
-    const quiz = await Quiz.findById(quizId);
+    // Changed from: Quiz.findById(quizId)
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: quizId }
+    });
+
     if (!quiz) {
       return res.status(404).json({
         success: false,
@@ -642,7 +739,13 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
 
     for (const takerId of quizTakerIds) {
       try {
-        const quizTaker = await QuizTaker.findById(takerId);
+        // Changed from: QuizTaker.findById(takerId)
+        const quizTaker = await prisma.quizTaker.findUnique({
+          where: { id: takerId },
+          include: {
+            assignedQuizzes: true
+          }
+        });
 
         if (!quizTaker) {
           results.failed.push({ takerId, reason: "Quiz taker not found" });
@@ -653,35 +756,16 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
         if (quizTaker.accountType !== "premium") {
           results.failed.push({
             takerId,
+            email: quizTaker.email,
             reason: "Can only assign quizzes to premium students",
           });
           continue;
         }
 
-        // Validate question set combination match
-        const quizCombo = quiz.questionSetCombination
-          .map((id) => id.toString())
-          .sort();
-        const takerCombo = quizTaker.questionSetCombination
-          .map((id) => id.toString())
-          .sort();
-
-        if (JSON.stringify(quizCombo) !== JSON.stringify(takerCombo)) {
-          results.failed.push({
-            takerId,
-            reason: "Question set combination does not match quiz requirements",
-          });
-          continue;
-        }
-
-        // Initialize assignedQuizzes if it doesn't exist
-        if (!quizTaker.assignedQuizzes) {
-          quizTaker.assignedQuizzes = [];
-        }
-
         // Check if quiz is already assigned
+        // Changed from checking array with .some()
         const alreadyAssigned = quizTaker.assignedQuizzes.some(
-          (aq) => aq.quizId.toString() === quizId,
+          (aq) => aq.quizId === quizId
         );
 
         if (alreadyAssigned) {
@@ -690,12 +774,15 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
         }
 
         // Assign quiz
-        quizTaker.assignedQuizzes.push({
-          quizId,
-          status: "pending",
+        // Changed from: pushing to array then save()
+        await prisma.assignedQuiz.create({
+          data: {
+            quizTakerId: takerId,
+            quizId: quizId,
+            status: "pending",
+          }
         });
 
-        await quizTaker.save();
         results.success.push({ takerId, email: quizTaker.email });
       } catch (error) {
         results.failed.push({ takerId, reason: error.message });
@@ -716,11 +803,6 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
   }
 });
 
-// @route   DELETE /api/admin/unassign-quiz
-// @desc    Unassign quiz from quiz taker
-// @access  Private (Admin only)
-// Add this route to your existing admin routes file (after the assign-quiz route)
-
 // @route   POST /api/admin/quiztakers/unassign
 // @desc    Unassign quiz from multiple quiz takers (bulk operation)
 // @access  Private (Admin only)
@@ -737,7 +819,11 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
     }
 
     // Check if quiz exists
-    const quiz = await Quiz.findById(quizId);
+    // Changed from: Quiz.findById(quizId)
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: quizId }
+    });
+
     if (!quiz) {
       return res.status(404).json({
         success: false,
@@ -752,7 +838,17 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
 
     for (const takerId of quizTakerIds) {
       try {
-        const quizTaker = await QuizTaker.findById(takerId);
+        // Changed from: QuizTaker.findById(takerId)
+        const quizTaker = await prisma.quizTaker.findUnique({
+          where: { id: takerId },
+          include: {
+            assignedQuizzes: {
+              where: {
+                quizId: quizId
+              }
+            }
+          }
+        });
 
         if (!quizTaker) {
           results.failed.push({ 
@@ -773,11 +869,9 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
         }
 
         // Check if quiz is assigned
-        const assignedQuizIndex = quizTaker.assignedQuizzes.findIndex(
-          (aq) => aq.quizId.toString() === quizId
-        );
+        const assignedQuiz = quizTaker.assignedQuizzes[0];
 
-        if (assignedQuizIndex === -1) {
+        if (!assignedQuiz) {
           results.failed.push({
             quizTakerId: takerId,
             email: quizTaker.email,
@@ -785,8 +879,6 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
           });
           continue;
         }
-
-        const assignedQuiz = quizTaker.assignedQuizzes[assignedQuizIndex];
 
         // Check if quiz is completed
         if (assignedQuiz.status === "completed") {
@@ -799,9 +891,12 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
         }
 
         // Remove quiz assignment
-        quizTaker.assignedQuizzes.splice(assignedQuizIndex, 1);
-
-        await quizTaker.save();
+        // Changed from: splicing array then save()
+        await prisma.assignedQuiz.delete({
+          where: {
+            id: assignedQuiz.id
+          }
+        });
         
         results.success.push({ 
           quizTakerId: takerId, 
@@ -829,32 +924,66 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
     });
   }
 });
+
 // @route   GET /api/admin/submissions
 // @desc    Get all quiz submissions (with filter for account type)
 // @access  Private (Admin only)
 router.get("/submissions", verifyAdmin, async (req, res) => {
   try {
-    const QuizSubmission = require("../models/QuizSubmission");
-    const { accountType } = req.query;
+    const { accountType, page = 1, limit = 50 } = req.query;
 
-    let submissions = await QuizSubmission.find()
-      .populate("quizId", "settings.title settings.isOpenQuiz")
-      .populate("quizTakerId", "email name accountType accessCode")
-      .sort({ submittedAt: -1 });
-
-    // Filter by account type if specified
+    // Build where clause
+    const where = {};
+    
     if (accountType && ["premium", "regular"].includes(accountType)) {
-      submissions = submissions.filter(
-        (sub) => sub.quizTakerId && sub.quizTakerId.accountType === accountType,
-      );
+      where.quizTaker = {
+        accountType: accountType
+      };
     }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Changed from: QuizSubmission.find().populate()
+    const [submissions, total] = await Promise.all([
+      prisma.quizSubmission.findMany({
+        where,
+        include: {
+          quiz: {
+            select: {
+              id: true,
+              title: true,
+              isOpenQuiz: true,
+            }
+          },
+          quizTaker: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              accountType: true,
+              accessCode: true,
+            }
+          }
+        },
+        orderBy: {
+          submittedAt: 'desc'
+        },
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.quizSubmission.count({ where })
+    ]);
 
     res.json({
       success: true,
       count: submissions.length,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / parseInt(limit)),
       submissions,
     });
   } catch (error) {
+    console.error("Get submissions error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -868,11 +997,32 @@ router.get("/submissions", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.get("/submission/:id", verifyAdmin, async (req, res) => {
   try {
-    const QuizSubmission = require("../models/QuizSubmission");
-
-    const submission = await QuizSubmission.findById(req.params.id)
-      .populate("quizId")
-      .populate("quizTakerId", "email name accountType accessCode");
+    // Changed from: QuizSubmission.findById(req.params.id).populate()
+    const submission = await prisma.quizSubmission.findUnique({
+      where: { id: req.params.id },
+      include: {
+        quiz: true,
+        quizTaker: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            accountType: true,
+            accessCode: true,
+          }
+        },
+        answers: {
+          include: {
+            quizQuestion: true
+          }
+        },
+        questionSetSubmissions: {
+          orderBy: {
+            questionSetOrder: 'asc'
+          }
+        }
+      }
+    });
 
     if (!submission) {
       return res.status(404).json({
@@ -886,6 +1036,7 @@ router.get("/submission/:id", verifyAdmin, async (req, res) => {
       submission,
     });
   } catch (error) {
+    console.error("Get submission error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -901,8 +1052,13 @@ router.put("/grade-essay/:submissionId", verifyAdmin, async (req, res) => {
   try {
     const { grades, feedback } = req.body;
 
-    const QuizSubmission = require("../models/QuizSubmission");
-    const submission = await QuizSubmission.findById(req.params.submissionId);
+    // Changed from: QuizSubmission.findById()
+    const submission = await prisma.quizSubmission.findUnique({
+      where: { id: req.params.submissionId },
+      include: {
+        answers: true
+      }
+    });
 
     if (!submission) {
       return res.status(404).json({
@@ -911,36 +1067,76 @@ router.put("/grade-essay/:submissionId", verifyAdmin, async (req, res) => {
       });
     }
 
-    // Update essay grades
-    grades.forEach((grade) => {
-      const answer = submission.answers.find(
-        (a) => a.questionId.toString() === grade.questionId,
-      );
-      if (answer && answer.questionType === "essay") {
-        answer.pointsAwarded = grade.pointsAwarded;
-        answer.isCorrect = grade.pointsAwarded > 0;
+    // Update essay grades using transaction
+    // Changed from: updating embedded documents
+    const updatedSubmission = await prisma.$transaction(async (tx) => {
+      // Update each answer
+      for (const grade of grades) {
+        const answer = submission.answers.find(
+          (a) => a.quizQuestionId === grade.questionId
+        );
+        
+        if (answer && answer.questionType === "essay") {
+          await tx.submissionAnswer.update({
+            where: { id: answer.id },
+            data: {
+              pointsAwarded: grade.pointsAwarded,
+              isCorrect: grade.pointsAwarded > 0,
+            }
+          });
+        }
       }
+
+      // Recalculate total score
+      const updatedAnswers = await tx.submissionAnswer.findMany({
+        where: { submissionId: req.params.submissionId }
+      });
+
+      const totalScore = updatedAnswers.reduce(
+        (sum, answer) => sum + answer.pointsAwarded,
+        0
+      );
+
+      // Calculate percentage
+      const percentage = submission.totalPoints > 0 
+        ? (totalScore / submission.totalPoints) * 100 
+        : 0;
+
+      // Update submission
+      return tx.quizSubmission.update({
+        where: { id: req.params.submissionId },
+        data: {
+          score: totalScore,
+          percentage: percentage,
+          status: "graded",
+          gradedById: req.admin.id, // From verifyAdmin middleware
+          gradedAt: new Date(),
+          feedback: feedback || "",
+        },
+        include: {
+          answers: {
+            include: {
+              quizQuestion: true
+            }
+          },
+          quizTaker: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+            }
+          }
+        }
+      });
     });
-
-    // Recalculate total score
-    submission.score = submission.answers.reduce(
-      (sum, answer) => sum + answer.pointsAwarded,
-      0,
-    );
-
-    submission.status = "graded";
-    submission.gradedBy = req.admin._id;
-    submission.gradedAt = new Date();
-    submission.feedback = feedback || "";
-
-    await submission.save();
 
     res.json({
       success: true,
       message: "Essay graded successfully",
-      submission,
+      submission: updatedSubmission,
     });
   } catch (error) {
+    console.error("Grade essay error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",

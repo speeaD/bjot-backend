@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const Admin = require('../models/Admin');
-const QuizTaker = require('../models/QuizTaker');
+const prisma = require('../utils/database');
+const bcrypt = require('bcryptjs'); // You'll need this for password hashing
+
+
 
 // Generate JWT Token
 const generateToken = (id, role) => {
@@ -27,7 +29,11 @@ router.post('/admin/login', async (req, res) => {
     }
 
     // Check if admin exists
-    const admin = await Admin.findOne({ email });
+    // Changed from: Admin.findOne({ email })
+    const admin = await prisma.admin.findUnique({
+      where: { email }
+    });
+
     if (!admin) {
       return res.status(401).json({ 
         success: false, 
@@ -36,7 +42,11 @@ router.post('/admin/login', async (req, res) => {
     }
 
     // Check password
-    const isMatch = await admin.comparePassword(password);
+    // NOTE: You'll need to implement password comparison
+    // If you had a comparePassword method on the Mongoose model,
+    // you'll need to use bcrypt.compare here
+    const isMatch = await bcrypt.compare(password, admin.password);
+    
     if (!isMatch) {
       return res.status(401).json({ 
         success: false, 
@@ -45,14 +55,15 @@ router.post('/admin/login', async (req, res) => {
     }
 
     // Generate token
-    const token = generateToken(admin._id, 'admin');
+    // Changed from: admin._id to admin.id (UUIDs in Prisma)
+    const token = generateToken(admin.id, 'admin');
 
     res.json({
       success: true,
       message: 'Login successful',
       token,
       admin: {
-        id: admin._id,
+        id: admin.id,
         email: admin.email,
         role: admin.role,
       },
@@ -89,7 +100,11 @@ router.post('/admin/register', async (req, res) => {
     }
 
     // Check if admin already exists
-    const existingAdmin = await Admin.findOne({ email });
+    // Changed from: Admin.findOne({ email })
+    const existingAdmin = await prisma.admin.findUnique({
+      where: { email }
+    });
+
     if (existingAdmin) {
       return res.status(400).json({ 
         success: false, 
@@ -97,19 +112,30 @@ router.post('/admin/register', async (req, res) => {
       });
     }
 
+    // Hash password
+    // NOTE: In Mongoose, you likely had a pre-save hook to hash passwords
+    // With Prisma, you need to hash manually before saving
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     // Create admin
-    const admin = new Admin({ email, password });
-    await admin.save();
+    // Changed from: new Admin({ ... }) then admin.save()
+    const admin = await prisma.admin.create({
+      data: {
+        email,
+        password: hashedPassword,
+        // role defaults to "admin" in schema, so no need to specify unless different
+      }
+    });
 
     // Generate token
-    const token = generateToken(admin._id, 'admin');
+    const token = generateToken(admin.id, 'admin');
 
     res.status(201).json({
       success: true,
       message: 'Admin registered successfully',
       token,
       admin: {
-        id: admin._id,
+        id: admin.id,
         email: admin.email,
         role: admin.role,
       },
@@ -139,8 +165,11 @@ router.post('/quiztaker/login', async (req, res) => {
     }
 
     // Check if quiz taker exists
-    const quizTaker = await QuizTaker.findOne({ 
-      email: email.trim()
+    // Changed from: QuizTaker.findOne({ email: email.trim() })
+    const quizTaker = await prisma.quizTaker.findFirst({
+      where: { 
+        email: email.trim()
+      }
     });
 
     if (!quizTaker) {
@@ -159,14 +188,14 @@ router.post('/quiztaker/login', async (req, res) => {
     }
 
     // Generate token
-    const token = generateToken(quizTaker._id, 'quiztaker');
+    const token = generateToken(quizTaker.id, 'quiztaker');
 
     res.json({
       success: true,
       message: 'Login successful',
       token,
       quizTaker: {
-        id: quizTaker._id,
+        id: quizTaker.id,
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
       },

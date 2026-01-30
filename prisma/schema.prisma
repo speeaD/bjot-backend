@@ -61,7 +61,7 @@ model QuestionSet {
 }
 
 // =============================================
-// Question Model
+// Question Model - ENHANCED VERSION
 // =============================================
 model Question {
   id             String   @id @default(uuid()) @db.Uuid
@@ -72,20 +72,56 @@ model Question {
   correctAnswer  Json?    @map("correct_answer") @db.JsonB
   points         Int      @default(1)
   orderNum       Int      @map("order_num")
+  
+  // ============================================
+  // NEW FIELDS FOR QUESTION FILTERING & ORGANIZATION
+  // ============================================
+  
+  // Tags for flexible categorization
+  // Example: ["new", "batch-2", "advanced", "january-2026"]
+  tags           Json?    @default("[]") @db.JsonB
+  
+  // Batch number for grouping questions added together
+  // Example: Batch 1 (initial), Batch 2 (added later), etc.
+  batchNumber    Int?     @map("batch_number")
+  
+  // Version identifier for tracking question iterations
+  // Example: "v1.0", "v2.0", "2024-Q1", "February-2026"
+  version        String?  @db.VarChar(50)
+  
+  // Date when question was added (different from createdAt)
+  // Useful for filtering "questions added after date X"
+  addedDate      DateTime @default(now()) @map("added_date") @db.Date
+  
+  // Archive flag to hide questions without deleting them
+  isArchived     Boolean  @default(false) @map("is_archived")
+  
+  // Additional metadata (flexible JSON for future use)
+  // Example: {"difficulty": "hard", "topic": "algebra", "estimatedTime": 120}
+  metadata       Json?    @db.JsonB
+  
+  // ============================================
+  // EXISTING FIELDS
+  // ============================================
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   // Relations
-  questionSet      QuestionSet      @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
-  quizQuestions    QuizQuestion[]
+  questionSet       QuestionSet       @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  quizQuestions     QuizQuestion[]
   gameUsedQuestions GameUsedQuestion[]
-  cbtAnswers       CbtAnswer[]
+  cbtAnswers        CbtAnswer[]
 
   @@unique([questionSetId, orderNum], name: "unique_question_order")
   @@index([questionSetId])
   @@index([type])
+  @@index([batchNumber])
+  @@index([version])
+  @@index([addedDate])
+  @@index([isArchived])
   @@map("questions")
 }
+
 
 // =============================================
 // Quiz Model
