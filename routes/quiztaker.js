@@ -1,33 +1,59 @@
 const express = require("express");
-const mongoose = require('mongoose');
 const router = express.Router();
 const { verifyQuizTaker } = require("../middleware/auth");
-const QuizTaker = require("../models/QuizTaker");
-const Quiz = require("../models/Quiz");
-const QuizSubmission = require("../models/QuizSubmission");
+const prisma = require('../utils/database');
 
 // @route   GET /api/quiztaker/dashboard
 // @desc    Get quiz taker dashboard data
 // @access  Private (Quiz taker only)
 router.get("/dashboard", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .select("-password")
-      .populate("assignedQuizzes.quizId", "settings")
-      .populate("assignedQuizzes.submissionId");
+    // Changed from: QuizTaker.findById().select().populate()
+    const quizTaker = await prisma.quizTaker.findUnique({
+      where: { id: req.quizTaker.id },
+      include: {
+        assignedQuizzes: {
+          include: {
+            quiz: {
+              select: {
+                id: true,
+                title: true,
+                isQuizChallenge: true,
+                isOpenQuiz: true,
+                description: true,
+              }
+            },
+            submissions: {
+              select: {
+                id: true,
+                score: true,
+                totalPoints: true,
+                percentage: true,
+                submittedAt: true,
+                status: true,
+              },
+              orderBy: {
+                submittedAt: 'desc'
+              },
+              take: 1 // Get latest submission
+            }
+          }
+        }
+      }
+    });
 
     res.json({
       success: true,
       quizTaker: {
-        id: quizTaker._id,
+        id: quizTaker.id,
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         assignedQuizzes: quizTaker.assignedQuizzes,
-        
         createdAt: quizTaker.createdAt,
       },
     });
   } catch (error) {
+    console.error("Error fetching dashboard:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -41,16 +67,31 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
 // @access  Private (Quiz taker only)
 router.get("/profile", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = req.quizTaker;
-
-    const completedCount = quizTaker.assignedQuizzes.filter(
-      (aq) => aq.status === "completed"
-    ).length;
+    // Changed from: using req.quizTaker with embedded arrays
+    const [quizTaker, completedCount] = await Promise.all([
+      prisma.quizTaker.findUnique({
+        where: { id: req.quizTaker.id },
+        include: {
+          assignedQuizzes: {
+            select: {
+              id: true,
+              status: true,
+            }
+          }
+        }
+      }),
+      prisma.assignedQuiz.count({
+        where: {
+          quizTakerId: req.quizTaker.id,
+          status: 'completed'
+        }
+      })
+    ]);
 
     res.json({
       success: true,
       profile: {
-        id: quizTaker._id,
+        id: quizTaker.id,
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         totalQuizzesAssigned: quizTaker.assignedQuizzes.length,
@@ -59,6 +100,7 @@ router.get("/profile", verifyQuizTaker, async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Error fetching profile:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -72,11 +114,21 @@ router.get("/profile", verifyQuizTaker, async (req, res) => {
 // @access  Private (Quiz taker only)
 router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
+    // Check if quiz is assigned to this quiz taker
+    // Changed from: QuizTaker.findById() then checking embedded array
+    const assignedQuiz = await prisma.assignedQuiz.findFirst({
+      where: {
+        quizTakerId: req.quizTaker.id,
+        quizId: req.params.quizId
+      },
+      include: {
+        questionSetOrder: {
+          orderBy: {
+            position: 'asc'
+          }
+        }
+      }
+    });
 
     if (!assignedQuiz) {
       return res.status(403).json({
@@ -92,7 +144,20 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
       });
     }
 
-    const quiz = await Quiz.findById(req.params.quizId);
+    // Changed from: Quiz.findById()
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: req.params.quizId },
+      include: {
+        questionSets: {
+          include: {
+            questions: true
+          },
+          orderBy: {
+            orderNum: 'asc'
+          }
+        }
+      }
+    });
 
     if (!quiz) {
       return res.status(404).json({
@@ -109,26 +174,43 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
     }
 
     const questionSetsOverview = quiz.questionSets.map((qs) => ({
-      _id: qs._id,
+      id: qs.id,
       questionSetId: qs.questionSetId,
       title: qs.title,
-      order: qs.order,
+      order: qs.orderNum,
       totalPoints: qs.totalPoints,
       questionCount: qs.questions.length,
     }));
 
+    // Get selected question set order
+    const selectedQuestionSetOrder = assignedQuiz.questionSetOrder.length > 0
+      ? assignedQuiz.questionSetOrder.map(qso => qso.orderValue)
+      : null;
+
     res.json({
       success: true,
       quiz: {
-        _id: quiz._id,
-        settings: quiz.settings,
+        id: quiz.id,
+        title: quiz.title,
+        coverImage: quiz.coverImage,
+        description: quiz.description,
+        instructions: quiz.instructions,
+        durationHours: quiz.durationHours,
+        durationMinutes: quiz.durationMinutes,
+        durationSeconds: quiz.durationSeconds,
+        multipleAttempts: quiz.multipleAttempts,
+        looseFocus: quiz.looseFocus,
+        viewAnswer: quiz.viewAnswer,
+        viewResults: quiz.viewResults,
+        displayCalculator: quiz.displayCalculator,
         questionSets: questionSetsOverview,
         totalPoints: quiz.totalPoints,
       },
       assignmentStatus: assignedQuiz.status,
-      selectedQuestionSetOrder: assignedQuiz.selectedQuestionSetOrder,
+      selectedQuestionSetOrder: selectedQuestionSetOrder,
     });
   } catch (error) {
+    console.error("Error fetching quiz:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -142,12 +224,15 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
 // @access  Private (Quiz taker only)
 router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
     const questionSetOrder = parseInt(req.params.questionSetOrder);
 
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
+    // Changed from: QuizTaker.findById() then checking embedded array
+    const assignedQuiz = await prisma.assignedQuiz.findFirst({
+      where: {
+        quizTakerId: req.quizTaker.id,
+        quizId: req.params.quizId
+      }
+    });
 
     if (!assignedQuiz) {
       return res.status(403).json({
@@ -156,7 +241,24 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
       });
     }
 
-    const quiz = await Quiz.findById(req.params.quizId);
+    // Changed from: Quiz.findById()
+    const quiz = await prisma.quiz.findUnique({
+      where: { id: req.params.quizId },
+      include: {
+        questionSets: {
+          where: {
+            orderNum: questionSetOrder
+          },
+          include: {
+            questions: {
+              orderBy: {
+                orderNum: 'asc'
+              }
+            }
+          }
+        }
+      }
+    });
 
     if (!quiz) {
       return res.status(404).json({
@@ -165,7 +267,7 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
       });
     }
 
-    const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
+    const questionSet = quiz.questionSets[0];
 
     if (!questionSet) {
       return res.status(404).json({
@@ -175,25 +277,26 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
     }
 
     const questionsWithoutAnswers = questionSet.questions.map((q) => ({
-      _id: q._id,
+      id: q.id,
       type: q.type,
       question: q.question,
       options: q.options,
       points: q.points,
-      order: q.order,
+      order: q.orderNum,
     }));
 
     res.json({
       success: true,
       questionSet: {
-        _id: questionSet._id,
+        id: questionSet.id,
         title: questionSet.title,
-        order: questionSet.order,
+        order: questionSet.orderNum,
         totalPoints: questionSet.totalPoints,
         questions: questionsWithoutAnswers,
       },
     });
   } catch (error) {
+    console.error("Error fetching question set:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -224,11 +327,16 @@ router.post("/quiz/:quizId/set-question-order", verifyQuizTaker, async (req, res
       });
     }
 
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
+    // Changed from: QuizTaker.findById() then checking embedded array
+    const assignedQuiz = await prisma.assignedQuiz.findFirst({
+      where: {
+        quizTakerId: req.quizTaker.id,
+        quizId: req.params.quizId
+      },
+      include: {
+        questionSetProgress: true
+      }
+    });
 
     if (!assignedQuiz) {
       return res.status(403).json({
@@ -244,7 +352,7 @@ router.post("/quiz/:quizId/set-question-order", verifyQuizTaker, async (req, res
       });
     }
 
-    if (assignedQuiz.status === "in-progress" && assignedQuiz.questionSetProgress) {
+    if (assignedQuiz.status === "in-progress" && assignedQuiz.questionSetProgress.length > 0) {
       const anyCompleted = assignedQuiz.questionSetProgress.some(
         qsp => qsp.status === 'completed'
       );
@@ -257,255 +365,46 @@ router.post("/quiz/:quizId/set-question-order", verifyQuizTaker, async (req, res
       }
     }
 
-    assignedQuiz.selectedQuestionSetOrder = questionSetOrder;
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-    
-    assignedQuiz.questionSetProgress.forEach(qsp => {
-      const indexInCustomOrder = questionSetOrder.indexOf(qsp.questionSetOrder);
-      qsp.selectedOrder = indexInCustomOrder + 1;
+    // Update using transaction
+    await prisma.$transaction(async (tx) => {
+      // Delete existing order
+      await tx.questionSetOrder.deleteMany({
+        where: { assignedQuizId: assignedQuiz.id }
+      });
+
+      // Create new order
+      await tx.questionSetOrder.createMany({
+        data: questionSetOrder.map((orderValue, index) => ({
+          assignedQuizId: assignedQuiz.id,
+          position: index,
+          orderValue: orderValue
+        }))
+      });
+
+      // Delete and recreate progress to match new order
+      await tx.questionSetProgress.deleteMany({
+        where: { assignedQuizId: assignedQuiz.id }
+      });
+
+      await tx.questionSetProgress.createMany({
+        data: questionSetOrder.map((orderValue, index) => ({
+          assignedQuizId: assignedQuiz.id,
+          questionSetOrder: orderValue,
+          selectedOrder: index + 1,
+          status: 'not-started',
+          score: 0,
+          totalPoints: 0
+        }))
+      });
     });
-
-    assignedQuiz.currentQuestionSetOrder = questionSetOrder[0];
-
-    quizTaker.markModified("assignedQuizzes");
-    await quizTaker.save();
 
     res.json({
       success: true,
       message: "Question set order saved successfully",
-      questionSetOrder: assignedQuiz.selectedQuestionSetOrder,
-      currentQuestionSetOrder: assignedQuiz.currentQuestionSetOrder,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
-
-// @route   GET /api/quiztaker/quiz/:quizId/progress
-// @desc    Get detailed progress for a quiz
-// @access  Private (Quiz taker only)
-router.get("/quiz/:quizId/progress", verifyQuizTaker, async (req, res) => {
-  try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .populate('assignedQuizzes.quizId', 'settings.title questionSets');
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId._id.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-    await quizTaker.save();
-
-    const quiz = assignedQuiz.quizId;
-    
-    const progress = {
-      quizId: quiz._id,
-      quizTitle: quiz.settings.title,
-      status: assignedQuiz.status,
-      startedAt: assignedQuiz.startedAt,
-      completedAt: assignedQuiz.completedAt,
-      selectedQuestionSetOrder: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
-      currentQuestionSetOrder: assignedQuiz.currentQuestionSetOrder,
-      questionSets: [],
-      overallProgress: {
-        completed: 0,
-        total: 4,
-        percentage: 0,
-      }
-    };
-
-    const questionSetDetails = quiz.questionSets.map(qs => ({
-      order: qs.order,
-      title: qs.title,
-      totalPoints: qs.totalPoints,
-      questionCount: qs.questions.length,
-    }));
-
-    assignedQuiz.questionSetProgress.forEach(qsp => {
-      const details = questionSetDetails.find(d => d.order === qsp.questionSetOrder);
-      
-      progress.questionSets.push({
-        questionSetOrder: qsp.questionSetOrder,
-        title: details?.title || 'Unknown',
-        selectedOrder: qsp.selectedOrder,
-        status: qsp.status,
-        startedAt: qsp.startedAt,
-        completedAt: qsp.completedAt,
-        score: qsp.score,
-        totalPoints: qsp.totalPoints || details?.totalPoints || 0,
-        questionCount: details?.questionCount || 0,
-        percentage: qsp.totalPoints > 0 ? Math.round((qsp.score / qsp.totalPoints) * 100) : 0,
-      });
-    });
-
-    progress.questionSets.sort((a, b) => {
-      if (a.selectedOrder && b.selectedOrder) {
-        return a.selectedOrder - b.selectedOrder;
-      }
-      return a.questionSetOrder - b.questionSetOrder;
-    });
-
-    const completedCount = assignedQuiz.questionSetProgress.filter(
-      qsp => qsp.status === 'completed'
-    ).length;
-    
-    progress.overallProgress.completed = completedCount;
-    progress.overallProgress.percentage = Math.round((completedCount / 4) * 100);
-
-    res.json({
-      success: true,
-      progress,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
-
-// @route   POST /api/quiztaker/quiz/:quizId/start
-// @desc    Start a quiz (marks as in-progress)
-// @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/start", verifyQuizTaker, async (req, res) => {
-  try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "You have already completed this quiz",
-      });
-    }
-
-    if (assignedQuiz.status === "in-progress") {
-      return res.json({
-        success: true,
-        message: "Quiz already in progress",
-        startedAt: assignedQuiz.startedAt,
-      });
-    }
-
-    assignedQuiz.status = "in-progress";
-    assignedQuiz.startedAt = new Date();
-    
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-
-    await quizTaker.save();
-
-    res.json({
-      success: true,
-      message: "Quiz started successfully",
-      startedAt: assignedQuiz.startedAt,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
-
-// @route   POST /api/quiztaker/quiz/:quizId/question-set/:questionSetOrder/start
-// @desc    Start a specific question set
-// @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/question-set/:questionSetOrder/start", verifyQuizTaker, async (req, res) => {
-  try {
-    const questionSetOrder = parseInt(req.params.questionSetOrder);
-
-    if (questionSetOrder < 1 || questionSetOrder > 4) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid question set order (must be 1-4)",
-      });
-    }
-
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Quiz already completed",
-      });
-    }
-
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-
-    const qsProgress = assignedQuiz.questionSetProgress.find(
-      qsp => qsp.questionSetOrder === questionSetOrder
-    );
-
-    if (!qsProgress) {
-      return res.status(404).json({
-        success: false,
-        message: "Question set not found",
-      });
-    }
-
-    if (qsProgress.status === 'completed') {
-      return res.status(400).json({
-        success: false,
-        message: "This question set has already been completed",
-      });
-    }
-
-    if (assignedQuiz.status === 'pending') {
-      assignedQuiz.status = 'in-progress';
-      assignedQuiz.startedAt = new Date();
-    }
-
-    if (qsProgress.status === 'not-started') {
-      qsProgress.status = 'in-progress';
-      qsProgress.startedAt = new Date();
-    }
-
-    assignedQuiz.currentQuestionSetOrder = questionSetOrder;
-
-    quizTaker.markModified("assignedQuizzes");
-    await quizTaker.save();
-
-    res.json({
-      success: true,
-      message: "Question set started successfully",
       questionSetOrder,
-      startedAt: qsProgress.startedAt,
     });
   } catch (error) {
+    console.error("Error setting question order:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -514,418 +413,322 @@ router.post("/quiz/:quizId/question-set/:questionSetOrder/start", verifyQuizTake
   }
 });
 
-// @route   GET /api/quiztaker/quiz/:quizId/next-question-set
-// @desc    Get the next question set to answer based on custom order
-// @access  Private (Quiz taker only)
-router.get("/quiz/:quizId/next-question-set", verifyQuizTaker, async (req, res) => {
-  try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Quiz already completed",
-      });
-    }
-
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-
-    const customOrder = assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4];
-
-    let nextQuestionSetOrder = null;
-    
-    for (const order of customOrder) {
-      const qsProgress = assignedQuiz.questionSetProgress.find(
-        qsp => qsp.questionSetOrder === order
-      );
-      
-      if (qsProgress && qsProgress.status !== 'completed') {
-        nextQuestionSetOrder = order;
-        break;
-      }
-    }
-
-    if (!nextQuestionSetOrder) {
-      return res.json({
-        success: true,
-        message: "All question sets completed",
-        nextQuestionSetOrder: null,
-        allCompleted: true,
-      });
-    }
-
-    res.json({
-      success: true,
-      nextQuestionSetOrder,
-      allCompleted: false,
-      customOrder,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+// Helper function to auto-grade an answer
+function autoGradeAnswer(questionType, userAnswer, correctAnswer) {
+  if (questionType === 'essay') {
+    return { isCorrect: null, pointsAwarded: 0 }; // Needs manual grading
   }
-});
+
+  if (questionType === 'multiple-choice') {
+    const isCorrect = userAnswer === correctAnswer;
+    return { isCorrect };
+  }
+
+  if (questionType === 'true-false') {
+    const isCorrect = userAnswer === correctAnswer;
+    return { isCorrect };
+  }
+
+  if (questionType === 'fill-in-the-blank') {
+    const normalizedUserAnswer = String(userAnswer).trim().toLowerCase();
+    const normalizedCorrectAnswer = String(correctAnswer).trim().toLowerCase();
+    const isCorrect = normalizedUserAnswer === normalizedCorrectAnswer;
+    return { isCorrect };
+  }
+
+  return { isCorrect: false };
+}
 
 // @route   POST /api/quiztaker/quiz/:quizId/submit
-// @desc    Submit question set answers (can be partial or final)
+// @desc    Submit quiz answers (one question set at a time or full quiz)
 // @access  Private (Quiz taker only)
 router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
-  // Start a session for transaction
-  const session = await mongoose.startSession();
-  
-  const MAX_RETRIES = 3;
-  let attempt = 0;
+  try {
+    const { answers, questionSetOrder, isFinalSubmission } = req.body;
 
-  while (attempt < MAX_RETRIES) {
-    try {
-      // Start transaction
-      session.startTransaction();
-
-      const { questionSetOrder, answers, isFinalSubmission } = req.body;
-
-      // Validation
-      if (!questionSetOrder || questionSetOrder < 1 || questionSetOrder > 4) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: "Invalid questionSetOrder. Must be between 1 and 4",
-        });
-      }
-
-      if (!answers || !Array.isArray(answers)) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: "Answers must be provided as an array",
-        });
-      }
-
-      // 🔑 Fetch fresh documents with session
-      const quizTaker = await QuizTaker.findById(req.quizTaker._id).session(session);
-
-      const assignedQuiz = quizTaker.assignedQuizzes.find(
-        (aq) => aq.quizId.toString() === req.params.quizId
-      );
-
-      if (!assignedQuiz) {
-        await session.abortTransaction();
-        return res.status(403).json({
-          success: false,
-          message: "This quiz is not assigned to you",
-        });
-      }
-
-      if (assignedQuiz.status === "completed") {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: "You have already completed this quiz",
-        });
-      }
-
-      const quiz = await Quiz.findById(req.params.quizId).session(session);
-
-      if (!quiz) {
-        await session.abortTransaction();
-        return res.status(404).json({
-          success: false,
-          message: "Quiz not found",
-        });
-      }
-
-      const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
-
-      if (!questionSet) {
-        await session.abortTransaction();
-        return res.status(404).json({
-          success: false,
-          message: "Question set not found",
-        });
-      }
-
-      // Initialize progress if needed
-      if (!assignedQuiz.questionSetProgress || assignedQuiz.questionSetProgress.length === 0) {
-        quizTaker.initializeQuestionSetProgress(req.params.quizId);
-      }
-
-      const qsProgress = assignedQuiz.questionSetProgress.find(
-        qsp => qsp.questionSetOrder === questionSetOrder
-      );
-
-      // 🔒 CRITICAL: Prevent duplicate submissions of same question set
-      if (qsProgress && qsProgress.status === 'completed') {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          message: "This question set has already been submitted",
-        });
-      }
-
-      // Start quiz if not started
-      if (assignedQuiz.status === "pending") {
-        assignedQuiz.status = "in-progress";
-        assignedQuiz.startedAt = new Date();
-      }
-
-      // 🔑 Find ONLY in-progress submission for THIS quiz taker
-      let submission = await QuizSubmission.findOne({
-        quizId: quiz._id,
-        quizTakerId: quizTaker._id,
-        status: 'in-progress'
-      }).session(session);
-
-      const isNewSubmission = !submission;
-
-      if (isNewSubmission) {
-        // Count existing completed submissions for attempt number
-        const existingSubmissionsCount = await QuizSubmission.countDocuments({
-          quizId: quiz._id,
-          quizTakerId: quizTaker._id,
-          status: { $in: ['auto-graded', 'pending-manual-grading', 'graded'] }
-        }).session(session);
-
-        submission = new QuizSubmission({
-          quizId: quiz._id,
-          quizTakerId: quizTaker._id,
-          answers: [],
-          questionSetSubmissions: [],
-          startedAt: assignedQuiz.startedAt,
-          submittedAt: new Date(),
-          timeTaken: 0,
-          score: 0,
-          totalPoints: quiz.totalPoints,
-          status: 'in-progress',
-          questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
-          attemptNumber: existingSubmissionsCount + 1,
-        });
-      }
-
-      // Grade answers
-      const gradedAnswers = [];
-      let questionSetScore = 0;
-      let hasEssayQuestions = false;
-
-      answers.forEach((submittedAnswer) => {
-        const question = questionSet.questions.find(
-          q => q._id.toString() === submittedAnswer.questionId
-        );
-
-        if (!question) {
-          console.warn(`Question ${submittedAnswer.questionId} not found in question set ${questionSetOrder}`);
-          return;
-        }
-
-        const answerObj = {
-          questionId: question._id,
-          questionSetOrder: questionSetOrder,
-          questionType: question.type,
-          answer: submittedAnswer.answer,
-          pointsPossible: question.points,
-          pointsAwarded: 0,
-          isCorrect: null,
-        };
-
-        switch (question.type) {
-          case "multiple-choice":
-            if (submittedAnswer.answer.trim() === question.correctAnswer.trim()) {
-              answerObj.isCorrect = true;
-              answerObj.pointsAwarded = question.points;
-              questionSetScore += question.points;
-            } else {
-              answerObj.isCorrect = false;
-            }
-            break;
-
-          case "true-false":
-            if (
-              String(submittedAnswer.answer).toLowerCase() ===
-              String(question.correctAnswer).toLowerCase()
-            ) {
-              answerObj.isCorrect = true;
-              answerObj.pointsAwarded = question.points;
-              questionSetScore += question.points;
-            } else {
-              answerObj.isCorrect = false;
-            }
-            break;
-
-          case "fill-in-the-blanks":
-            const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-            const correctAns = String(question.correctAnswer).trim().toLowerCase();
-
-            if (submittedAns === correctAns) {
-              answerObj.isCorrect = true;
-              answerObj.pointsAwarded = question.points;
-              questionSetScore += question.points;
-            } else {
-              answerObj.isCorrect = false;
-            }
-            break;
-
-          case "essay":
-            answerObj.isCorrect = null;
-            hasEssayQuestions = true;
-            break;
-        }
-
-        gradedAnswers.push(answerObj);
-      });
-
-      // 🔑 Remove old answers for this question set (prevent duplicates)
-      submission.answers = submission.answers.filter(
-        ans => ans.questionSetOrder !== questionSetOrder
-      );
-
-      submission.answers.push(...gradedAnswers);
-
-      // 🔑 Update or add question set submission tracking
-      const existingQSSubmission = submission.questionSetSubmissions.find(
-        qss => qss.questionSetOrder === questionSetOrder
-      );
-
-      const orderAnswered = assignedQuiz.questionSetProgress.filter(
-        qsp => qsp.status === 'completed'
-      ).length + 1;
-
-      if (existingQSSubmission) {
-        // Update existing
-        existingQSSubmission.submittedAt = new Date();
-        existingQSSubmission.score = questionSetScore;
-        existingQSSubmission.totalPoints = questionSet.totalPoints;
-        existingQSSubmission.orderAnswered = orderAnswered;
-      } else {
-        // Add new (only if not exists)
-        submission.questionSetSubmissions.push({
-          questionSetOrder,
-          submittedAt: new Date(),
-          score: questionSetScore,
-          totalPoints: questionSet.totalPoints,
-          orderAnswered,
-        });
-      }
-
-      // Calculate total score
-      submission.score = submission.answers.reduce(
-        (sum, answer) => sum + answer.pointsAwarded, 0
-      );
-
-      // Update question set progress
-      if (qsProgress) {
-        qsProgress.status = 'completed';
-        qsProgress.completedAt = new Date();
-        qsProgress.score = questionSetScore;
-        qsProgress.totalPoints = questionSet.totalPoints;
-      }
-
-      const hasAnyEssay = submission.answers.some(ans => ans.questionType === 'essay');
-      
-      if (isFinalSubmission) {
-        const endTime = new Date();
-        const startTime = new Date(assignedQuiz.startedAt);
-        submission.timeTaken = Math.floor((endTime - startTime) / 1000);
-        submission.submittedAt = endTime;
-        submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded";
-
-        assignedQuiz.status = "completed";
-        assignedQuiz.completedAt = endTime;
-        assignedQuiz.submissionId = submission._id;
-
-        const quizTakenEntry = {
-          quizId: quiz._id,
-          score: submission.score,
-          totalPoints: submission.totalPoints,
-          percentage: submission.percentage,
-          timeTaken: submission.timeTaken,
-          examType: 'multi-subject',
-          questionSets: quiz.questionSets.map(qs => ({
-            questionSetId: qs.questionSetId,
-            title: qs.title
-          })),
-          completedAt: endTime,
-          attemptNumber: submission.attemptNumber || 1,
-        };
-
-        quizTaker.quizzesTaken.push(quizTakenEntry);
-      }
-
-      quizTaker.markModified("assignedQuizzes");
-
-      // 🔑 ATOMIC: Both saves succeed or both fail
-      await submission.save({ session });
-      await quizTaker.save({ session });
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      // Success! Return response
-      return res.json({
-        success: true,
-        message: isFinalSubmission ? "Quiz submitted successfully" : "Question set submitted successfully",
-        submission: {
-          id: submission._id,
-          questionSetScore: questionSetScore,
-          questionSetTotalPoints: questionSet.totalPoints,
-          overallScore: submission.score,
-          overallTotalPoints: submission.totalPoints,
-          percentage: submission.percentage,
-          timeTaken: submission.timeTaken,
-          status: submission.status,
-          isFinalSubmission: isFinalSubmission || false,
-          attemptNumber: submission.attemptNumber,
-        },
-      });
-
-    } catch (error) {
-      // Abort transaction on any error
-      await session.abortTransaction();
-
-      // Check if it's a version error
-      if (error.name === 'VersionError') {
-        attempt++;
-        console.log(`Version conflict on attempt ${attempt}/${MAX_RETRIES}, retrying...`);
-        
-        if (attempt >= MAX_RETRIES) {
-          console.error("Max retries reached for version conflict:", error);
-          await session.endSession();
-          return res.status(409).json({
-            success: false,
-            message: "Unable to save due to concurrent updates. Please try again.",
-            error: error.message,
-          });
-        }
-        
-        // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt - 1)));
-        continue; // Retry
-      }
-      
-      // Other errors - don't retry
-      console.error("Submit quiz error:", error);
-      await session.endSession();
-      return res.status(500).json({
+    if (!answers || !Array.isArray(answers)) {
+      return res.status(400).json({
         success: false,
-        message: "Server error",
-        error: error.message,
+        message: "Answers array is required",
       });
     }
-  }
 
-  // End session after all retries
-  await session.endSession();
+    if (questionSetOrder === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Question set order is required",
+      });
+    }
+
+    // Use Prisma transactions for atomic operations
+    const result = await prisma.$transaction(async (tx) => {
+      // Get assigned quiz with lock
+      const assignedQuiz = await tx.assignedQuiz.findFirst({
+        where: {
+          quizTakerId: req.quizTaker.id,
+          quizId: req.params.quizId
+        },
+        include: {
+          questionSetProgress: true
+        }
+      });
+
+      if (!assignedQuiz) {
+        throw new Error("This quiz is not assigned to you");
+      }
+
+      // Get quiz with questions
+      const quiz = await tx.quiz.findUnique({
+        where: { id: req.params.quizId },
+        include: {
+          questionSets: {
+            include: {
+              questions: true
+            },
+            orderBy: {
+              orderNum: 'asc'
+            }
+          }
+        }
+      });
+
+      if (!quiz) {
+        throw new Error("Quiz not found");
+      }
+
+      // Find the question set being submitted
+      const questionSet = quiz.questionSets.find(qs => qs.orderNum === questionSetOrder);
+      
+      if (!questionSet) {
+        throw new Error(`Question set with order ${questionSetOrder} not found`);
+      }
+
+      // Find or create submission
+      let submission = await tx.quizSubmission.findFirst({
+        where: {
+          quizId: req.params.quizId,
+          quizTakerId: req.quizTaker.id,
+          status: 'in-progress'
+        },
+        include: {
+          answers: true
+        }
+      });
+
+      const isNewSubmission = !submission;
+      
+      if (isNewSubmission) {
+        // Start new submission
+        const now = new Date();
+        submission = await tx.quizSubmission.create({
+          data: {
+            quizId: req.params.quizId,
+            quizTakerId: req.quizTaker.id,
+            assignedQuizId: assignedQuiz.id,
+            status: 'in-progress',
+            score: 0,
+            totalPoints: quiz.totalPoints,
+            percentage: 0,
+            timeTaken: 0,
+            startedAt: now,
+            submittedAt: now, // Will be updated on final submission
+          },
+          include: {
+            answers: true
+          }
+        });
+
+        // Update assigned quiz status
+        await tx.assignedQuiz.update({
+          where: { id: assignedQuiz.id },
+          data: {
+            status: 'in-progress',
+            startedAt: now
+          }
+        });
+      }
+
+      // Process answers for this question set
+      let questionSetScore = 0;
+      let hasEssay = false;
+
+      for (const answerData of answers) {
+        const question = questionSet.questions.find(q => q.id === answerData.questionId);
+        
+        if (!question) {
+          console.warn(`Question ${answerData.questionId} not found in question set`);
+          continue;
+        }
+
+        // Auto-grade the answer
+        const gradeResult = autoGradeAnswer(
+          question.type,
+          answerData.answer,
+          question.correctAnswer
+        );
+
+        const pointsAwarded = gradeResult.isCorrect === true ? question.points : 0;
+        
+        if (question.type === 'essay') {
+          hasEssay = true;
+        }
+
+        questionSetScore += pointsAwarded;
+
+        // Check if answer already exists
+        const existingAnswer = await tx.submissionAnswer.findFirst({
+          where: {
+            submissionId: submission.id,
+            quizQuestionId: question.id
+          }
+        });
+
+        if (existingAnswer) {
+          // Update existing answer
+          await tx.submissionAnswer.update({
+            where: { id: existingAnswer.id },
+            data: {
+              answer: answerData.answer,
+              isCorrect: gradeResult.isCorrect,
+              pointsAwarded: pointsAwarded
+            }
+          });
+        } else {
+          // Create new answer
+          await tx.submissionAnswer.create({
+            data: {
+              submissionId: submission.id,
+              quizQuestionId: question.id,
+              questionSetOrder: questionSetOrder,
+              questionType: question.type,
+              answer: answerData.answer,
+              isCorrect: gradeResult.isCorrect,
+              pointsAwarded: pointsAwarded,
+              pointsPossible: question.points
+            }
+          });
+        }
+      }
+
+      // Update question set progress
+      const existingProgress = await tx.questionSetProgress.findFirst({
+        where: {
+          assignedQuizId: assignedQuiz.id,
+          questionSetOrder: questionSetOrder
+        }
+      });
+
+      if (existingProgress) {
+        await tx.questionSetProgress.update({
+          where: { id: existingProgress.id },
+          data: {
+            status: 'completed',
+            score: questionSetScore,
+            totalPoints: questionSet.totalPoints,
+            completedAt: new Date()
+          }
+        });
+      } else {
+        await tx.questionSetProgress.create({
+          data: {
+            assignedQuizId: assignedQuiz.id,
+            questionSetOrder: questionSetOrder,
+            status: 'completed',
+            score: questionSetScore,
+            totalPoints: questionSet.totalPoints,
+            completedAt: new Date()
+          }
+        });
+      }
+
+      // Calculate total score from all answers
+      const allAnswers = await tx.submissionAnswer.findMany({
+        where: { submissionId: submission.id }
+      });
+
+      const totalScore = allAnswers.reduce((sum, ans) => sum + ans.pointsAwarded, 0);
+      const percentage = quiz.totalPoints > 0 ? (totalScore / quiz.totalPoints) * 100 : 0;
+
+      // Handle final submission
+      if (isFinalSubmission) {
+        const endTime = new Date();
+        const timeTaken = Math.floor((endTime - submission.startedAt) / 1000);
+        
+        const finalStatus = hasEssay ? "pending-manual-grading" : "auto-graded";
+
+        await tx.quizSubmission.update({
+          where: { id: submission.id },
+          data: {
+            score: totalScore,
+            percentage: percentage,
+            timeTaken: timeTaken,
+            submittedAt: endTime,
+            status: finalStatus
+          }
+        });
+
+        await tx.assignedQuiz.update({
+          where: { id: assignedQuiz.id },
+          data: {
+            status: 'completed',
+            completedAt: endTime
+          }
+        });
+
+        // Create quiz history entry
+        await tx.quizTakenHistory.create({
+          data: {
+            quizTakerId: req.quizTaker.id,
+            quizId: quiz.id,
+            submissionId: submission.id,
+            examType: 'multi-subject',
+            score: totalScore,
+            totalPoints: quiz.totalPoints,
+            percentage: percentage,
+            timeTaken: timeTaken,
+            completedAt: endTime
+          }
+        });
+      } else {
+        // Just update the current scores
+        await tx.quizSubmission.update({
+          where: { id: submission.id },
+          data: {
+            score: totalScore,
+            percentage: percentage
+          }
+        });
+      }
+
+      return {
+        submissionId: submission.id,
+        questionSetScore,
+        questionSetTotalPoints: questionSet.totalPoints,
+        overallScore: totalScore,
+        overallTotalPoints: quiz.totalPoints,
+        percentage: percentage,
+        isFinalSubmission: isFinalSubmission || false,
+        status: isFinalSubmission ? (hasEssay ? "pending-manual-grading" : "auto-graded") : "in-progress"
+      };
+    }, {
+      maxWait: 5000, // Maximum time to wait for a transaction slot
+      timeout: 10000 // Maximum time for the transaction
+    });
+
+    res.json({
+      success: true,
+      message: result.isFinalSubmission ? "Quiz submitted successfully" : "Question set submitted successfully",
+      submission: result
+    });
+
+  } catch (error) {
+    console.error("Submit quiz error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
+      error: error.message,
+    });
+  }
 });
 
 // @route   GET /api/quiztaker/submission/:submissionId
@@ -933,9 +736,25 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 // @access  Private (Quiz taker only)
 router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
   try {
-    const submission = await QuizSubmission.findById(
-      req.params.submissionId
-    ).populate("quizId");
+    // Changed from: QuizSubmission.findById().populate()
+    const submission = await prisma.quizSubmission.findUnique({
+      where: { id: req.params.submissionId },
+      include: {
+        quiz: {
+          include: {
+            questionSets: {
+              include: {
+                questions: true
+              },
+              orderBy: {
+                orderNum: 'asc'
+              }
+            }
+          }
+        },
+        answers: true
+      }
+    });
 
     if (!submission) {
       return res.status(404).json({
@@ -945,18 +764,18 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
     }
 
     // Verify submission belongs to this quiz taker
-    if (submission.quizTakerId.toString() !== req.quizTaker._id.toString()) {
+    if (submission.quizTakerId !== req.quizTaker.id) {
       return res.status(403).json({
         success: false,
         message: "Access denied",
       });
     }
 
-    const quiz = submission.quizId;
+    const quiz = submission.quiz;
 
     // Check quiz settings for what to show
-    const canViewAnswers = quiz.settings.viewAnswer;
-    const canViewResults = quiz.settings.viewResults;
+    const canViewAnswers = quiz.viewAnswer;
+    const canViewResults = quiz.viewResults;
 
     if (!canViewResults) {
       return res.status(403).json({
@@ -968,7 +787,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
     let responseData = {
       success: true,
       submission: {
-        id: submission._id,
+        id: submission.id,
         score: submission.score,
         totalPoints: submission.totalPoints,
         percentage: submission.percentage,
@@ -983,11 +802,11 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
     if (canViewAnswers) {
       const answersByQuestionSet = [];
 
-      // Iterate through ALL question sets in the quiz (regardless of whether answered)
+      // Iterate through ALL question sets in the quiz
       for (const questionSet of quiz.questionSets) {
         const questionSetData = {
           questionSetTitle: questionSet.title,
-          order: questionSet.order,
+          order: questionSet.orderNum,
           answers: []
         };
 
@@ -995,7 +814,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
         for (const question of questionSet.questions) {
           // Find the submitted answer for this question
           const submittedAnswer = submission.answers.find(
-            ans => ans.questionId.toString() === question._id.toString()
+            ans => ans.quizQuestionId === question.id
           );
 
           if (submittedAnswer) {
@@ -1020,7 +839,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
               isCorrect: false,
               pointsAwarded: 0,
               pointsPossible: question.points,
-              wasAnswered: false, // Flag to indicate this was not answered
+              wasAnswered: false,
             });
           }
         }
@@ -1028,9 +847,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
         answersByQuestionSet.push(questionSetData);
       }
 
-      // Sort by question set order
-      answersByQuestionSet.sort((a, b) => a.order - b.order);
-
+      // Already sorted by questionSet order
       responseData.submission.answersByQuestionSet = answersByQuestionSet;
     }
 
@@ -1044,45 +861,46 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
     });
   }
 });
+
 // @route   GET /api/quiztaker/my-submissions
-// @desc    Get all submissions from quizzesTaken array
+// @desc    Get all submissions from quiz history
 // @access  Private (Quiz taker only)
 router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .select('quizzesTaken')
-      .populate({
-        path: 'quizzesTaken.quizId',
-        select: 'settings.title settings.isQuizChallenge'
-      });
-
-    if (!quizTaker) {
-      return res.status(404).json({
-        success: false,
-        message: "Quiz taker not found",
-      });
-    }
-
-    // Sort by completedAt (most recent first)
-    const sortedQuizzes = quizTaker.quizzesTaken
-      .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+    // Changed from: QuizTaker.findById().select().populate()
+    const submissions = await prisma.quizTakenHistory.findMany({
+      where: {
+        quizTakerId: req.quizTaker.id
+      },
+      include: {
+        quiz: {
+          select: {
+            id: true,
+            title: true,
+            isQuizChallenge: true
+          }
+        }
+      },
+      orderBy: {
+        completedAt: 'desc'
+      }
+    });
 
     res.json({
       success: true,
-      count: sortedQuizzes.length,
-      submissions: sortedQuizzes.map((quiz) => ({
-        id: quiz._id,
-        quizId: quiz.quizId?._id,
-        quizTitle: quiz.quizId?.settings?.title || 'CBT Exam',
-        score: quiz.score || 0,
-        totalPoints: quiz.totalPoints > 0 ? Math.round((quiz.score / quiz.totalPoints) * 400) : 0,
-        percentage: quiz.totalPoints > 0 
-          ? Math.round((quiz.score / quiz.totalPoints) * 100) 
-          : 0,
-        completedAt: quiz.completedAt,
+      count: submissions.length,
+      submissions: submissions.map((entry) => ({
+        id: entry.id,
+        quizId: entry.quiz?.id,
+        quizTitle: entry.quiz?.title || 'CBT Exam',
+        score: entry.score || 0,
+        totalPoints: entry.totalPoints || 0,
+        percentage: entry.percentage || 0,
+        completedAt: entry.completedAt,
       })),
     });
   } catch (error) {
+    console.error("Error fetching submissions:", error);
     res.status(500).json({
       success: false,
       message: "Server error",

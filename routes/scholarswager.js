@@ -1,25 +1,30 @@
 const express = require('express');
 const router = express.Router();
-const { verifyQuizTaker } = require('../middleware/auth'); // Your auth middleware
-const GameSession = require('../models/GameSession');
-const QuestionSet = require('../models/QuestionSet');
-
+const { verifyQuizTaker } = require('../middleware/auth');
+const prisma = require('../utils/database');
 
 // @route   GET /api/scholarswager/subjects
 // @desc    Get all available subjects (question sets)
 // @access  Private
 router.get('/subjects', async (req, res) => {
   try {
-    const questionSets = await QuestionSet.find({ 
-      isActive: true,
-      questionCount: { $gt: 0 }
-    })
-    .select('title questionCount')
-    .sort({ title: 1 });
+    // Changed from: QuestionSet.find({ isActive: true, questionCount: { $gt: 0 } })
+    const questionSets = await prisma.questionSet.findMany({
+      where: { 
+        isActive: true,
+        questionCount: { gt: 0 }
+      },
+      select: {
+        id: true,
+        title: true,
+        questionCount: true
+      },
+      orderBy: { title: 'asc' }
+    });
 
     // Map to subject format for frontend
     const subjects = questionSets.map(qs => ({
-      id: qs._id,
+      id: qs.id,
       name: qs.title,
       questionCount: qs.questionCount
     }));
@@ -29,6 +34,7 @@ router.get('/subjects', async (req, res) => {
       subjects,
     });
   } catch (error) {
+    console.error("Error fetching subjects:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -51,9 +57,20 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    const questionSet = await QuestionSet.findOne({
-      _id: questionSetId,
-      isActive: true,
+    // Changed from: QuestionSet.findOne({ _id: questionSetId, isActive: true })
+    const questionSet = await prisma.questionSet.findFirst({
+      where: {
+        id: questionSetId,
+        isActive: true,
+      },
+      include: {
+        questions: {
+          where: {
+            type: 'multiple-choice', // Only get multiple-choice questions
+            isArchived: false
+          }
+        }
+      }
     });
 
     if (!questionSet) {
@@ -64,7 +81,7 @@ router.post('/start', async (req, res) => {
     }
 
     // Filter only multiple-choice questions for Scholar's Wager
-    const mcQuestions = questionSet.questions.filter(q => q.type === 'multiple-choice');
+    const mcQuestions = questionSet.questions;
 
     if (mcQuestions.length === 0) {
       return res.status(400).json({
@@ -74,34 +91,39 @@ router.post('/start', async (req, res) => {
     }
 
     // Check if user has an active session
-    const existingSession = await GameSession.findOne({
-      userId: userId,
-      status: 'active',
-      gameType: 'scholars-wager',
+    // Changed from: GameSession.findOne({ userId, status: 'active', gameType: 'scholars-wager' })
+    const existingSession = await prisma.gameSession.findFirst({
+      where: {
+        userId: userId,
+        status: 'active',
+        gameType: 'scholars-wager',
+      }
     });
 
     if (existingSession) {
       return res.status(400).json({
         success: false,
         message: 'You already have an active game session',
-        sessionId: existingSession._id,
+        sessionId: existingSession.id,
       });
     }
 
     // Create new game session
-    const gameSession = new GameSession({
-      userId: userId,
-      questionSetId: questionSet._id,
-      subject: questionSet.title,
+    // Changed from: new GameSession({ ... }).save()
+    const gameSession = await prisma.gameSession.create({
+      data: {
+        userId: userId,
+        questionSetId: questionSet.id,
+        subject: questionSet.title,
+        gameType: 'scholars-wager',
+      }
     });
-
-    await gameSession.save();
 
     res.status(201).json({
       success: true,
       message: 'Game session started',
       session: {
-        id: gameSession._id,
+        id: gameSession.id,
         subject: gameSession.subject,
         currentScore: gameSession.currentScore,
         goalScore: gameSession.goalScore,
@@ -109,6 +131,7 @@ router.post('/start', async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Error starting game session:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -122,8 +145,18 @@ router.post('/start', async (req, res) => {
 // @access  Private
 router.get('/session/:sessionId/question', async (req, res) => {
   try {
-    const gameSession = await GameSession.findOne({
-      _id: req.params.sessionId,
+    // Changed from: GameSession.findOne({ _id: req.params.sessionId })
+    const gameSession = await prisma.gameSession.findUnique({
+      where: {
+        id: req.params.sessionId,
+      },
+      include: {
+        usedQuestions: {
+          select: {
+            questionId: true
+          }
+        }
+      }
     });
 
     if (!gameSession) {
@@ -140,7 +173,18 @@ router.get('/session/:sessionId/question', async (req, res) => {
       });
     }
 
-    const questionSet = await QuestionSet.findById(gameSession.questionSetId);
+    // Changed from: QuestionSet.findById()
+    const questionSet = await prisma.questionSet.findUnique({
+      where: { id: gameSession.questionSetId },
+      include: {
+        questions: {
+          where: {
+            type: 'multiple-choice',
+            isArchived: false
+          }
+        }
+      }
+    });
 
     if (!questionSet) {
       return res.status(404).json({
@@ -150,23 +194,31 @@ router.get('/session/:sessionId/question', async (req, res) => {
     }
 
     // Get only multiple-choice questions that haven't been used
+    const usedQuestionIds = gameSession.usedQuestions.map(uq => uq.questionId);
+    
     const availableQuestions = questionSet.questions.filter(q => 
-      q.type === 'multiple-choice' && 
-      !gameSession.usedQuestionIds.includes(q._id)
+      !usedQuestionIds.includes(q.id)
     );
 
     if (availableQuestions.length === 0) {
       // No more questions - game over
-      gameSession.status = gameSession.currentScore >= gameSession.goalScore ? 'won' : 'lost';
-      gameSession.completedAt = new Date();
-      await gameSession.save();
+      const finalStatus = gameSession.currentScore >= gameSession.goalScore ? 'won' : 'lost';
+      
+      // Update game session
+      const updatedSession = await prisma.gameSession.update({
+        where: { id: req.params.sessionId },
+        data: {
+          status: finalStatus,
+          completedAt: new Date()
+        }
+      });
 
       return res.json({
         success: true,
         message: 'No more questions available',
         gameOver: true,
-        finalScore: gameSession.currentScore,
-        status: gameSession.status,
+        finalScore: updatedSession.currentScore,
+        status: updatedSession.status,
       });
     }
 
@@ -177,7 +229,7 @@ router.get('/session/:sessionId/question', async (req, res) => {
     res.json({
       success: true,
       question: {
-        id: selectedQuestion._id,
+        id: selectedQuestion.id,
         text: selectedQuestion.question,
         options: selectedQuestion.options,
       },
@@ -187,6 +239,7 @@ router.get('/session/:sessionId/question', async (req, res) => {
       questionsRemaining: availableQuestions.length,
     });
   } catch (error) {
+    console.error("Error getting question:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -217,8 +270,18 @@ router.post('/session/:sessionId/answer', async (req, res) => {
       });
     }
 
-    const gameSession = await GameSession.findOne({
-      _id: req.params.sessionId,
+    // Changed from: GameSession.findOne({ _id: req.params.sessionId })
+    const gameSession = await prisma.gameSession.findUnique({
+      where: {
+        id: req.params.sessionId,
+      },
+      include: {
+        usedQuestions: {
+          select: {
+            questionId: true
+          }
+        }
+      }
     });
 
     if (!gameSession) {
@@ -243,8 +306,11 @@ router.post('/session/:sessionId/answer', async (req, res) => {
       });
     }
 
-    const questionSet = await QuestionSet.findById(gameSession.questionSetId);
-    const question = questionSet.questions.id(questionId);
+    // Get the question
+    // Changed from: questionSet.questions.id(questionId)
+    const question = await prisma.question.findUnique({
+      where: { id: questionId }
+    });
 
     if (!question) {
       return res.status(404).json({
@@ -254,7 +320,9 @@ router.post('/session/:sessionId/answer', async (req, res) => {
     }
 
     // Check if question was already answered
-    if (gameSession.usedQuestionIds.includes(questionId)) {
+    const usedQuestionIds = gameSession.usedQuestions.map(uq => uq.questionId);
+    
+    if (usedQuestionIds.includes(questionId)) {
       return res.status(400).json({
         success: false,
         message: 'Question already answered',
@@ -274,47 +342,82 @@ router.post('/session/:sessionId/answer', async (req, res) => {
       pointsChange = -wager;
     }
 
-    // Update game session
-    gameSession.currentScore += pointsChange;
-    gameSession.questionsAnswered += 1;
-    if (isCorrect) gameSession.correctAnswers += 1;
-    gameSession.usedQuestionIds.push(questionId);
-    
-    // Add to history
-    gameSession.history.push({
-      questionId,
-      question: question.question,
-      selectedAnswer,
-      correctAnswer: question.correctAnswer,
-      wager,
-      isCorrect,
-      pointsChange,
-    });
+    const newScore = gameSession.currentScore + pointsChange;
+    const newQuestionsAnswered = gameSession.questionsAnswered + 1;
+    const newCorrectAnswers = isCorrect ? gameSession.correctAnswers + 1 : gameSession.correctAnswers;
 
-    // Check win/loss conditions
-    if (gameSession.currentScore >= gameSession.goalScore) {
-      gameSession.status = 'won';
-      gameSession.completedAt = new Date();
-    } else if (gameSession.currentScore < 5) {
+    // Determine new status
+    let newStatus = 'active';
+    let completedAt = null;
+    
+    if (newScore >= gameSession.goalScore) {
+      newStatus = 'won';
+      completedAt = new Date();
+    } else if (newScore < 5) {
       // Can't make minimum wager anymore
-      gameSession.status = 'lost';
-      gameSession.completedAt = new Date();
+      newStatus = 'lost';
+      completedAt = new Date();
     }
 
-    await gameSession.save();
+    // Calculate duration if game is ending
+    let duration = null;
+    if (completedAt) {
+      const startTime = new Date(gameSession.startedAt);
+      duration = Math.floor((completedAt - startTime) / 1000); // Duration in seconds
+    }
+
+    // Update game session using transaction
+    // Changed from: updating arrays and calling .save()
+    const updatedSession = await prisma.$transaction(async (tx) => {
+      // Add to used questions
+      await tx.gameUsedQuestion.create({
+        data: {
+          gameSessionId: req.params.sessionId,
+          questionId: questionId
+        }
+      });
+
+      // Add to history
+      await tx.gameHistory.create({
+        data: {
+          gameSessionId: req.params.sessionId,
+          questionId: questionId,
+          question: question.question,
+          selectedAnswer: selectedAnswer.toString(),
+          correctAnswer: question.correctAnswer,
+          wager: wager,
+          isCorrect: isCorrect,
+          pointsChange: Math.round(pointsChange * 100) / 100, // Round to 2 decimals
+        }
+      });
+
+      // Update session
+      return tx.gameSession.update({
+        where: { id: req.params.sessionId },
+        data: {
+          currentScore: Math.round(newScore * 100) / 100, // Round to 2 decimals
+          questionsAnswered: newQuestionsAnswered,
+          correctAnswers: newCorrectAnswers,
+          status: newStatus,
+          ...(completedAt && { completedAt }),
+          ...(duration !== null && { duration })
+        }
+      });
+    });
 
     res.json({
       success: true,
       result: {
         isCorrect,
         correctAnswer: question.correctAnswer,
-        pointsChange,
-        newScore: gameSession.currentScore,
-        status: gameSession.status,
+        pointsChange: Math.round(pointsChange * 100) / 100,
+        newScore: updatedSession.currentScore,
+        status: updatedSession.status,
       },
-      gameOver: gameSession.status !== 'active',
+      gameOver: updatedSession.status !== 'active',
     });
   } catch (error) {
+    console.error("Error submitting answer:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -328,8 +431,28 @@ router.post('/session/:sessionId/answer', async (req, res) => {
 // @access  Private
 router.get('/session/:sessionId', async (req, res) => {
   try {
-    const gameSession = await GameSession.findOne({
-      _id: req.params.sessionId,
+    // Changed from: GameSession.findOne({ _id: req.params.sessionId })
+    const gameSession = await prisma.gameSession.findUnique({
+      where: {
+        id: req.params.sessionId,
+      },
+      include: {
+        usedQuestions: {
+          include: {
+            question: {
+              select: {
+                question: true,
+                type: true
+              }
+            }
+          }
+        },
+        history: {
+          orderBy: {
+            timestamp: 'asc'
+          }
+        }
+      }
     });
 
     if (!gameSession) {
@@ -344,6 +467,7 @@ router.get('/session/:sessionId', async (req, res) => {
       session: gameSession,
     });
   } catch (error) {
+    console.error("Error fetching game session:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -357,10 +481,13 @@ router.get('/session/:sessionId', async (req, res) => {
 // @access  Private
 router.post('/session/:sessionId/quit', async (req, res) => {
   try {
-    const gameSession = await GameSession.findOne({
-      _id: req.params.sessionId,
-      userId: req.userId,
-      status: 'active',
+    // Changed from: GameSession.findOne({ _id, userId, status })
+    const gameSession = await prisma.gameSession.findFirst({
+      where: {
+        id: req.params.sessionId,
+        userId: req.userId,
+        status: 'active',
+      }
     });
 
     if (!gameSession) {
@@ -370,15 +497,21 @@ router.post('/session/:sessionId/quit', async (req, res) => {
       });
     }
 
-    gameSession.status = 'abandoned';
-    gameSession.completedAt = new Date();
-    await gameSession.save();
+    // Changed from: gameSession.status = 'abandoned'; gameSession.save()
+    await prisma.gameSession.update({
+      where: { id: req.params.sessionId },
+      data: {
+        status: 'abandoned',
+        completedAt: new Date()
+      }
+    });
 
     res.json({
       success: true,
       message: 'Game abandoned',
     });
   } catch (error) {
+    console.error("Error quitting game:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -394,27 +527,43 @@ router.get('/leaderboard', async (req, res) => {
   try {
     const { limit = 10, subject } = req.query;
 
-    const filter = { status: 'won' };
-    if (subject) filter.subject = subject;
+    const where = { status: 'won' };
+    if (subject) where.subject = subject;
 
-    const topScores = await GameSession.find(filter)
-      .populate('userId', 'name email') // Adjust fields based on your User model
-      .sort({ currentScore: -1, duration: 1 })
-      .limit(parseInt(limit));
+    // Changed from: GameSession.find().populate().sort().limit()
+    const topScores = await prisma.gameSession.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            name: true,
+            email: true
+          }
+        }
+      },
+      orderBy: [
+        { currentScore: 'desc' },
+        { duration: 'asc' }
+      ],
+      take: parseInt(limit)
+    });
 
     res.json({
       success: true,
       leaderboard: topScores.map((session, index) => ({
         rank: index + 1,
-        player: session.userId.name,
+        player: session.user.name || session.user.email,
         score: session.currentScore,
         subject: session.subject,
         questionsAnswered: session.questionsAnswered,
-        accuracy: ((session.correctAnswers / session.questionsAnswered) * 100).toFixed(1),
+        accuracy: session.questionsAnswered > 0 
+          ? ((session.correctAnswers / session.questionsAnswered) * 100).toFixed(1) 
+          : '0.0',
         duration: session.duration,
       })),
     });
   } catch (error) {
+    console.error("Error fetching leaderboard:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -430,19 +579,42 @@ router.get('/history', async (req, res) => {
   try {
     const { limit = 10, status } = req.query;
 
-    const filter = { userId: req.user._id };
-    if (status) filter.status = status;
+    const where = { userId: req.user.id }; // Changed from: req.user._id
+    if (status) where.status = status;
 
-    const history = await GameSession.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .select('-history'); // Exclude detailed history for list view
+    // Changed from: GameSession.find().sort().limit().select()
+    const history = await prisma.gameSession.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: parseInt(limit),
+      select: {
+        id: true,
+        userId: true,
+        gameType: true,
+        questionSetId: true,
+        subject: true,
+        currentScore: true,
+        goalScore: true,
+        questionsAnswered: true,
+        correctAnswers: true,
+        status: true,
+        duration: true,
+        startedAt: true,
+        completedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        // Exclude history field for list view
+      }
+    });
 
     res.json({
       success: true,
       history,
     });
   } catch (error) {
+    console.error("Error fetching game history:", error);
     res.status(500).json({
       success: false,
       message: 'Server error',
