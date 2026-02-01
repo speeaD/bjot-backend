@@ -49,6 +49,7 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         assignedQuizzes: quizTaker.assignedQuizzes,
+        submission: quizTaker.submissions,
         createdAt: quizTaker.createdAt,
       },
     });
