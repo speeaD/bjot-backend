@@ -3,6 +3,78 @@ const router = express.Router();
 const { verifyAdmin } = require('../middleware/auth');
 const QuestionSet = require('../models/QuestionSet');
 
+function parseQuestions(data) {
+  const questions = [];
+  const validTypes = ['multiple-choice', 'essay', 'true-false', 'fill-in-the-blanks'];
+
+  data.forEach((row, index) => {
+    try {
+      const type = row.type?.trim().toLowerCase();
+      const questionText = row.question?.trim();
+      const points = parseInt(row.points) || 1;
+
+      if (!type || !questionText) {
+        console.warn(`Skipping row ${index + 1}: Missing type or question`);
+        return;
+      }
+
+      if (!validTypes.includes(type)) {
+        console.warn(`Skipping row ${index + 1}: Invalid question type '${type}'`);
+        return;
+      }
+
+      const questionObj = {
+        type,
+        question: questionText,
+        points,
+        order: index + 1,
+      };
+
+      if (type === 'multiple-choice') {
+        const optionsStr = row.options?.trim();
+        if (!optionsStr) {
+          console.warn(`Skipping row ${index + 1}: Multiple choice requires options`);
+          return;
+        }
+        questionObj.options = optionsStr
+          .split('|')
+          .map((opt) => opt.trim())
+          .filter((opt) => opt);
+        questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim();
+
+        if (!questionObj.correctAnswer) {
+          console.warn(`Skipping row ${index + 1}: Missing correct answer`);
+          return;
+        }
+      } else if (type === 'true-false') {
+        const answer = (row.correctanswer?.trim() || row['correct answer']?.trim())?.toLowerCase();
+        if (answer === 'true' || answer === 't' || answer === '1') {
+          questionObj.correctAnswer = true;
+        } else if (answer === 'false' || answer === 'f' || answer === '0') {
+          questionObj.correctAnswer = false;
+        } else {
+          console.warn(`Skipping row ${index + 1}: True/False requires 'true' or 'false' answer`);
+          return;
+        }
+      } else if (type === 'fill-in-the-blanks') {
+        questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim();
+        if (!questionObj.correctAnswer) {
+          console.warn(`Skipping row ${index + 1}: Missing correct answer`);
+          return;
+        }
+      } else if (type === 'essay') {
+        questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim() || '';
+      }
+
+      questions.push(questionObj);
+    } catch (error) {
+      console.error(`Error parsing row ${index + 1}:`, error.message);
+    }
+  });
+
+  return questions;
+}
+
 // @route   POST /api/questionset/bulk-upload
 // @desc    Create a new question set via bulk upload (Excel/CSV)
 // @access  Private (Admin only)
@@ -133,75 +205,180 @@ router.post('/bulk-upload', verifyAdmin, async (req, res) => {
 // @desc    Add a new batch to an existing question set
 // @access  Private (Admin only)
 router.post('/:id/batches', verifyAdmin, async (req, res) => {
-  try {
-    const { batchNumber, name, questions } = req.body;
+  const upload = req.app.get('upload');
+  const uploadMiddleware = upload.single('file');
 
-    if (!batchNumber || !name) {
+  uploadMiddleware(req, res, async (err) => {
+    if (err) {
       return res.status(400).json({
         success: false,
-        message: 'Batch number and name are required',
+        message: err.message || 'File upload error',
       });
     }
 
-    if (!questions || !Array.isArray(questions) || questions.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Questions array is required and must not be empty',
-      });
-    }
+    try {
+      // Get batch info from body
+      const batchNumber = parseInt(req.body.batchNumber);
+      const batchName = req.body.name?.trim();
 
-    const questionSet = await QuestionSet.findById(req.params.id);
-
-    if (!questionSet) {
-      return res.status(404).json({
-        success: false,
-        message: 'Question set not found',
-      });
-    }
-
-    // Check if batch number already exists
-    if (questionSet.usesBatches) {
-      const existingBatch = questionSet.batches.find(b => b.batchNumber === batchNumber);
-      if (existingBatch) {
+      if (isNaN(batchNumber) || batchNumber < 1) {
         return res.status(400).json({
           success: false,
-          message: `Batch ${batchNumber} already exists`,
+          message: 'Valid batchNumber (positive integer) is required',
         });
       }
-    } else {
-      // Convert to batch structure if not already
-      questionSet.usesBatches = true;
-      if (questionSet.questions.length > 0) {
-        questionSet.batches = [{
-          batchNumber: 1,
-          name: 'Batch 1',
-          questions: questionSet.questions,
-        }];
-        questionSet.questions = [];
+
+      if (!batchName) {
+        return res.status(400).json({
+          success: false,
+          message: 'Batch name is required',
+        });
       }
+
+      let questions = [];
+
+      // Priority: if file uploaded, parse it
+      if (req.file) {
+        const fileBuffer = req.file.buffer;
+        const mimetype = req.file.mimetype;
+        let parsedData = [];
+
+        if (mimetype === 'text/csv') {
+          const Papa = require('papaparse');
+          const csvString = fileBuffer.toString('utf-8');
+          const result = Papa.parse(csvString, {
+            header: true,
+            skipEmptyLines: true,
+            transformHeader: (header) => header.trim().toLowerCase(),
+          });
+
+          if (result.errors.length > 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'Error parsing CSV file',
+              errors: result.errors,
+            });
+          }
+
+          parsedData = result.data;
+        } else if (
+          mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+          mimetype === 'application/vnd.ms-excel' ||
+          mimetype.includes('spreadsheet')
+        ) {
+          const XLSX = require('node-xlsx');
+          const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          parsedData = XLSX.utils.sheet_to_json(worksheet, {
+            raw: false,
+            defval: '',
+          });
+
+          // Normalize headers to lowercase/trim
+          parsedData = parsedData.map((row) => {
+            const normalized = {};
+            Object.keys(row).forEach((key) => {
+              normalized[key.trim().toLowerCase()] = row[key];
+            });
+            return normalized;
+          });
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'Unsupported file type. Use .csv, .xlsx, or .xls',
+          });
+        }
+
+        questions = parseQuestions(parsedData);
+
+        if (questions.length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'No valid questions found in the uploaded file',
+          });
+        }
+      } 
+      // Fallback: if no file but questions in body (JSON array)
+      else if (req.body.questions) {
+        try {
+          questions = JSON.parse(req.body.questions);
+          if (!Array.isArray(questions) || questions.length === 0) {
+            return res.status(400).json({
+              success: false,
+              message: 'Questions must be a non-empty array',
+            });
+          }
+        } catch (parseErr) {
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid questions JSON format',
+          });
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Either a file upload or a questions array in the body is required',
+        });
+      }
+
+      // Now proceed with adding the batch
+      const questionSet = await QuestionSet.findById(req.params.id);
+
+      if (!questionSet) {
+        return res.status(404).json({
+          success: false,
+          message: 'Question set not found',
+        });
+      }
+
+      // Check for duplicate batch number
+      if (questionSet.usesBatches) {
+        const existing = questionSet.batches.find(b => b.batchNumber === batchNumber);
+        if (existing) {
+          return res.status(400).json({
+            success: false,
+            message: `Batch number ${batchNumber} already exists`,
+          });
+        }
+      } else {
+        // Auto-convert legacy set to batches if this is the first batch
+        questionSet.usesBatches = true;
+        if (questionSet.questions?.length > 0) {
+          questionSet.batches = [{
+            batchNumber: 1,
+            name: 'Batch 1 (Legacy Questions)',
+            questions: questionSet.questions,
+            isActive: true,
+          }];
+          questionSet.questions = [];
+        }
+      }
+
+      // Add the new batch
+      questionSet.batches.push({
+        batchNumber,
+        name: batchName,
+        questions,
+        isActive: true, // Default to active; adjust in schema if needed
+      });
+
+      await questionSet.save();
+
+      res.status(201).json({
+        success: true,
+        message: `Batch added successfully with ${questions.length} questions`,
+        questionSet,
+      });
+    } catch (error) {
+      console.error('Error adding batch:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Server error while adding batch',
+        error: error.message,
+      });
     }
-
-    // Add new batch
-    questionSet.batches.push({
-      batchNumber,
-      name,
-      questions,
-    });
-
-    await questionSet.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Batch added successfully',
-      questionSet,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message,
-    });
-  }
+  });
 });
 
 // @route   PUT /api/questionset/:id/batches/:batchId
