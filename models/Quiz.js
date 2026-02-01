@@ -35,6 +35,17 @@ const QuizQuestionSetSchema = new mongoose.Schema({
     ref: 'QuestionSet',
     required: true,
   },
+  // NEW: Batch information
+  batchNumber: {
+    type: Number,
+    min: 1,
+  },
+  batchId: {
+    type: mongoose.Schema.Types.ObjectId,
+  },
+  batchName: {
+    type: String,
+  },
   title: {
     type: String,
     required: true,
@@ -67,7 +78,6 @@ const QuizSchema = new mongoose.Schema({
       type: Boolean,
       default: false,
     },
-    // NEW: Flag for open quizzes
     isOpenQuiz: {
       type: Boolean,
       default: false,
@@ -131,7 +141,7 @@ const QuizSchema = new mongoose.Schema({
     }
   },
   
-  // NEW: Track the question set combination used in this quiz
+  // Track the question set combination (unchanged - just the base question set IDs)
   questionSetCombination: {
     type: [mongoose.Schema.Types.ObjectId],
     ref: 'QuestionSet',
@@ -142,6 +152,23 @@ const QuizSchema = new mongoose.Schema({
       message: 'Question set combination must contain exactly 4 question sets'
     }
   },
+  
+  // NEW: Track batch configuration used in this quiz
+  batchConfiguration: [{
+    questionSetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'QuestionSet',
+    },
+    batchNumber: {
+      type: Number,
+      min: 1,
+    },
+    order: {
+      type: Number,
+      min: 1,
+      max: 4,
+    }
+  }],
   
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -176,8 +203,15 @@ QuizSchema.pre('save', function() {
       return sum + setTotal;
     }, 0);
     
-    // Update questionSetCombination
+    // Update questionSetCombination (just the base IDs, not batch info)
     this.questionSetCombination = this.questionSets.map(qs => qs.questionSetId);
+    
+    // Update batchConfiguration
+    this.batchConfiguration = this.questionSets.map(qs => ({
+      questionSetId: qs.questionSetId,
+      batchNumber: qs.batchNumber || null,
+      order: qs.order,
+    }));
   }
   this.updatedAt = Date.now();
 });
@@ -186,6 +220,19 @@ QuizSchema.pre('save', function() {
 QuizSchema.methods.getTotalDurationInSeconds = function() {
   const { hours, minutes, seconds } = this.settings.duration;
   return (hours * 3600) + (minutes * 60) + seconds;
+};
+
+// Helper method to get batch info for a specific question set order
+QuizSchema.methods.getBatchInfo = function(order) {
+  const questionSet = this.questionSets.find(qs => qs.order === order);
+  if (!questionSet) return null;
+  
+  return {
+    questionSetId: questionSet.questionSetId,
+    batchNumber: questionSet.batchNumber,
+    batchName: questionSet.batchName,
+    title: questionSet.title,
+  };
 };
 
 module.exports = mongoose.model('Quiz', QuizSchema);

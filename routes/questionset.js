@@ -25,8 +25,11 @@ router.post('/bulk-upload', verifyAdmin, async (req, res) => {
     }
 
     try {
-      // Get title from form data
+      // Get title and batch info from form data
       const title = req.body.title?.trim();
+      const usesBatches = req.body.usesBatches === 'true';
+      const batchNumber = parseInt(req.body.batchNumber) || 1;
+      const batchName = req.body.batchName?.trim() || `Batch ${batchNumber}`;
       
       if (!title) {
         return res.status(400).json({
@@ -90,13 +93,25 @@ router.post('/bulk-upload', verifyAdmin, async (req, res) => {
         });
       }
 
-      // Create question set
-      const questionSet = new QuestionSet({
+      // Create question set with batch structure
+      const questionSetData = {
         title,
-        questions,
         createdBy: req.admin._id,
-      });
+        usesBatches,
+      };
 
+      if (usesBatches) {
+        questionSetData.batches = [{
+          batchNumber,
+          name: batchName,
+          questions,
+        }];
+      } else {
+        // Legacy structure
+        questionSetData.questions = questions;
+      }
+
+      const questionSet = new QuestionSet(questionSetData);
       await questionSet.save();
 
       res.status(201).json({
@@ -112,6 +127,299 @@ router.post('/bulk-upload', verifyAdmin, async (req, res) => {
       });
     }
   });
+});
+
+// @route   POST /api/questionset/:id/batches
+// @desc    Add a new batch to an existing question set
+// @access  Private (Admin only)
+router.post('/:id/batches', verifyAdmin, async (req, res) => {
+  try {
+    const { batchNumber, name, questions } = req.body;
+
+    if (!batchNumber || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Batch number and name are required',
+      });
+    }
+
+    if (!questions || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Questions array is required and must not be empty',
+      });
+    }
+
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    // Check if batch number already exists
+    if (questionSet.usesBatches) {
+      const existingBatch = questionSet.batches.find(b => b.batchNumber === batchNumber);
+      if (existingBatch) {
+        return res.status(400).json({
+          success: false,
+          message: `Batch ${batchNumber} already exists`,
+        });
+      }
+    } else {
+      // Convert to batch structure if not already
+      questionSet.usesBatches = true;
+      if (questionSet.questions.length > 0) {
+        questionSet.batches = [{
+          batchNumber: 1,
+          name: 'Batch 1',
+          questions: questionSet.questions,
+        }];
+        questionSet.questions = [];
+      }
+    }
+
+    // Add new batch
+    questionSet.batches.push({
+      batchNumber,
+      name,
+      questions,
+    });
+
+    await questionSet.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'Batch added successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   PUT /api/questionset/:id/batches/:batchId
+// @desc    Update a specific batch in a question set
+// @access  Private (Admin only)
+router.put('/:id/batches/:batchId', verifyAdmin, async (req, res) => {
+  try {
+    const { name, questions, isActive } = req.body;
+
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    // Update batch fields
+    if (name) batch.name = name;
+    if (questions) batch.questions = questions;
+    if (typeof isActive !== 'undefined') batch.isActive = isActive;
+
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: 'Batch updated successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   DELETE /api/questionset/:id/batches/:batchId
+// @desc    Delete a specific batch from a question set
+// @access  Private (Admin only)
+router.delete('/:id/batches/:batchId', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    // Check if batch is being used in any quiz
+    const Quiz = require('../models/Quiz');
+    const quizzesUsingBatch = await Quiz.countDocuments({
+      'questionSets.questionSetId': req.params.id,
+      'questionSets.batchId': req.params.batchId,
+    });
+
+    if (quizzesUsingBatch > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete batch. It is being used in ${quizzesUsingBatch} quiz(zes). Please remove it from those quizzes first or deactivate it instead.`,
+      });
+    }
+
+    questionSet.batches.pull(req.params.batchId);
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: 'Batch deleted successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   PATCH /api/questionset/:id/batches/:batchId/toggle-active
+// @desc    Toggle batch active status
+// @access  Private (Admin only)
+router.patch('/:id/batches/:batchId/toggle-active', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    batch.isActive = !batch.isActive;
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: `Batch ${batch.isActive ? 'activated' : 'deactivated'} successfully`,
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   GET /api/questionset/:id/batches
+// @desc    Get all batches for a question set
+// @access  Private (Admin only)
+router.get('/:id/batches', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.json({
+        success: true,
+        usesBatches: false,
+        batches: [],
+        message: 'This question set does not use batches',
+      });
+    }
+
+    res.json({
+      success: true,
+      usesBatches: true,
+      batches: questionSet.batches,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   POST /api/questionset/:id/convert-to-batches
+// @desc    Convert a legacy question set to use batches
+// @access  Private (Admin only)
+router.post('/:id/convert-to-batches', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.convertToBatches(req.params.id);
+
+    res.json({
+      success: true,
+      message: 'Question set converted to batch structure successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
 });
 
 // @route   GET /api/questionset
@@ -191,7 +499,10 @@ router.put('/:id', verifyAdmin, async (req, res) => {
 
     // Update fields
     if (title) questionSet.title = title;
-    if (questions) questionSet.questions = questions;
+    if (questions && !questionSet.usesBatches) {
+      // Only allow direct question updates for non-batched question sets
+      questionSet.questions = questions;
+    }
     if (typeof isActive !== 'undefined') questionSet.isActive = isActive;
 
     await questionSet.save();
@@ -284,7 +595,7 @@ router.patch('/:id/toggle-active', verifyAdmin, async (req, res) => {
 });
 
 // @route   POST /api/questionset/:id/questions
-// @desc    Add questions to existing question set
+// @desc    Add questions to existing question set (legacy only)
 // @access  Private (Admin only)
 router.post('/:id/questions', verifyAdmin, async (req, res) => {
   try {
@@ -303,6 +614,13 @@ router.post('/:id/questions', verifyAdmin, async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Question set not found',
+      });
+    }
+
+    if (questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set uses batches. Please add questions to a specific batch instead.',
       });
     }
 
@@ -330,7 +648,7 @@ router.post('/:id/questions', verifyAdmin, async (req, res) => {
 });
 
 // @route   PUT /api/questionset/:id/questions/:questionId
-// @desc    Update a specific question in a question set
+// @desc    Update a specific question in a question set (legacy only)
 // @access  Private (Admin only)
 router.put('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
   try {
@@ -340,6 +658,13 @@ router.put('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Question set not found',
+      });
+    }
+
+    if (questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set uses batches. Please update questions within a specific batch.',
       });
     }
 
@@ -371,7 +696,7 @@ router.put('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
 });
 
 // @route   DELETE /api/questionset/:id/questions/:questionId
-// @desc    Delete a specific question from a question set
+// @desc    Delete a specific question from a question set (legacy only)
 // @access  Private (Admin only)
 router.delete('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
   try {
@@ -384,12 +709,185 @@ router.delete('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
       });
     }
 
+    if (questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set uses batches. Please delete questions from a specific batch.',
+      });
+    }
+
     questionSet.questions.pull(req.params.questionId);
     await questionSet.save();
 
     res.json({
       success: true,
       message: 'Question deleted successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   POST /api/questionset/:id/batches/:batchId/questions
+// @desc    Add questions to a specific batch
+// @access  Private (Admin only)
+router.post('/:id/batches/:batchId/questions', verifyAdmin, async (req, res) => {
+  try {
+    const { questions } = req.body;
+
+    if (!questions || !Array.isArray(questions)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Questions array is required',
+      });
+    }
+
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    // Add new questions with proper order
+    const startOrder = batch.questions.length;
+    questions.forEach((q, index) => {
+      q.order = startOrder + index + 1;
+    });
+
+    batch.questions.push(...questions);
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: 'Questions added to batch successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   PUT /api/questionset/:id/batches/:batchId/questions/:questionId
+// @desc    Update a specific question in a batch
+// @access  Private (Admin only)
+router.put('/:id/batches/:batchId/questions/:questionId', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    const question = batch.questions.id(req.params.questionId);
+
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question not found in batch',
+      });
+    }
+
+    // Update question fields
+    Object.assign(question, req.body);
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: 'Question updated successfully',
+      questionSet,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   DELETE /api/questionset/:id/batches/:batchId/questions/:questionId
+// @desc    Delete a specific question from a batch
+// @access  Private (Admin only)
+router.delete('/:id/batches/:batchId/questions/:questionId', verifyAdmin, async (req, res) => {
+  try {
+    const questionSet = await QuestionSet.findById(req.params.id);
+
+    if (!questionSet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Question set not found',
+      });
+    }
+
+    if (!questionSet.usesBatches) {
+      return res.status(400).json({
+        success: false,
+        message: 'This question set does not use batches',
+      });
+    }
+
+    const batch = questionSet.batches.id(req.params.batchId);
+
+    if (!batch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Batch not found',
+      });
+    }
+
+    batch.questions.pull(req.params.questionId);
+    await questionSet.save();
+
+    res.json({
+      success: true,
+      message: 'Question deleted from batch successfully',
       questionSet,
     });
   } catch (error) {

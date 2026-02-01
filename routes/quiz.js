@@ -5,12 +5,12 @@ const Quiz = require('../models/Quiz');
 const QuestionSet = require('../models/QuestionSet');
 
 // @route   POST /api/quiz
-// @desc    Create a new quiz with 4 question sets
+// @desc    Create a new quiz with 4 question sets (with batch support)
 // @access  Private (Admin only)
 router.post('/', verifyAdmin, async (req, res) => {
   try {
     // Destructure the entire body to get settings at root level
-    const { questionSetCombination, settings } = req.body;
+    const { questionSetCombination, batchConfiguration, settings } = req.body;
 
     // Validation
     if (!settings || !settings.title) {
@@ -36,6 +36,16 @@ router.post('/', verifyAdmin, async (req, res) => {
       });
     }
 
+    // Validate batchConfiguration if provided
+    if (batchConfiguration) {
+      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== 4) {
+        return res.status(400).json({
+          success: false,
+          message: 'Batch configuration must have exactly 4 entries (one per question set)',
+        });
+      }
+    }
+
     // Fetch all question sets
     const questionSets = await QuestionSet.find({
       _id: { $in: questionSetCombination },
@@ -57,22 +67,64 @@ router.post('/', verifyAdmin, async (req, res) => {
         throw new Error(`Question set with ID ${setId} not found`);
       }
 
-      // Create snapshot of questions
-      const questions = questionSet.questions.map(q => ({
-        type: q.type,
-        question: q.question,
-        options: q.options,
-        correctAnswer: q.correctAnswer,
-        points: q.points,
-        order: q.order,
-        originalQuestionId: q._id,
-      }));
+      // Check if batch is specified for this question set
+      const batchConfig = batchConfiguration?.find(bc => bc.questionSetId === setId);
+      const batchNumber = batchConfig?.batchNumber;
+
+      let questions = [];
+      let batchId = null;
+      let batchName = null;
+      let totalPoints = 0;
+
+      // If question set uses batches and a batch is specified
+      if (questionSet.usesBatches && batchNumber) {
+        const batch = questionSet.batches.find(b => b.batchNumber === batchNumber && b.isActive);
+        
+        if (!batch) {
+          throw new Error(`Batch ${batchNumber} not found or inactive in question set "${questionSet.title}"`);
+        }
+
+        batchId = batch._id;
+        batchName = batch.name;
+        totalPoints = batch.totalPoints;
+
+        // Create snapshot of questions from the batch
+        questions = batch.questions.map(q => ({
+          type: q.type,
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          points: q.points,
+          order: q.order,
+          originalQuestionId: q._id,
+        }));
+      } 
+      // Legacy: If question set doesn't use batches
+      else if (!questionSet.usesBatches) {
+        totalPoints = questionSet.totalPoints;
+
+        // Create snapshot of questions from the main questions array
+        questions = questionSet.questions.map(q => ({
+          type: q.type,
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          points: q.points,
+          order: q.order,
+          originalQuestionId: q._id,
+        }));
+      } else {
+        throw new Error(`Question set "${questionSet.title}" uses batches but no batch number was specified`);
+      }
 
       return {
         questionSetId: questionSet._id,
-        title: questionSet.title,
+        batchNumber: batchNumber || undefined,
+        batchId: batchId || undefined,
+        batchName: batchName || undefined,
+        title: batchName ? `${questionSet.title} - ${batchName}` : questionSet.title,
         questions,
-        totalPoints: questionSet.totalPoints,
+        totalPoints,
         order: index + 1,
       };
     });
@@ -88,13 +140,12 @@ router.post('/', verifyAdmin, async (req, res) => {
         instructions: settings.instructions || '',
         duration: settings.duration || { hours: 0, minutes: 30, seconds: 0 },
         multipleAttempts: settings.multipleAttempts || false,
-        looseFocus: settings.permitLoseFocus || false, // Note: permitLoseFocus maps to looseFocus
+        looseFocus: settings.permitLoseFocus || false,
         viewAnswer: settings.viewAnswer !== undefined ? settings.viewAnswer : true,
         viewResults: settings.viewResults !== undefined ? settings.viewResults : true,
         displayCalculator: settings.displayCalculator || false,
       },
       questionSets: quizQuestionSets,
-      questionSetCombination: questionSetCombination,
       createdBy: req.admin._id,
     });
 
@@ -152,7 +203,7 @@ router.get('/:id', verifyAdmin, async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.id)
       .populate('createdBy', 'email')
-      .populate('questionSets.questionSetId', 'title questionCount totalPoints');
+      .populate('questionSets.questionSetId', 'title questionCount totalPoints usesBatches');
 
     if (!quiz) {
       return res.status(404).json({
@@ -215,11 +266,11 @@ router.put('/:id', verifyAdmin, async (req, res) => {
 });
 
 // @route   PUT /api/quiz/:id/question-sets
-// @desc    Replace question sets in a quiz (recreates snapshots)
+// @desc    Replace question sets in a quiz (recreates snapshots with batch support)
 // @access  Private (Admin only)
 router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
   try {
-    const { questionSetIds } = req.body;
+    const { questionSetIds, batchConfiguration } = req.body;
 
     if (!questionSetIds || !Array.isArray(questionSetIds) || questionSetIds.length !== 4) {
       return res.status(400).json({
@@ -235,6 +286,16 @@ router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
         success: false,
         message: 'Quiz not found',
       });
+    }
+
+    // Validate batchConfiguration if provided
+    if (batchConfiguration) {
+      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== 4) {
+        return res.status(400).json({
+          success: false,
+          message: 'Batch configuration must have exactly 4 entries (one per question set)',
+        });
+      }
     }
 
     // Fetch all question sets
@@ -258,21 +319,62 @@ router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
         throw new Error(`Question set with ID ${setId} not found`);
       }
 
-      const questions = questionSet.questions.map(q => ({
-        type: q.type,
-        question: q.question,
-        options: q.options,
-        correctAnswer: q.correctAnswer,
-        points: q.points,
-        order: q.order,
-        originalQuestionId: q._id,
-      }));
+      // Check if batch is specified for this question set
+      const batchConfig = batchConfiguration?.find(bc => bc.questionSetId === setId);
+      const batchNumber = batchConfig?.batchNumber;
+
+      let questions = [];
+      let batchId = null;
+      let batchName = null;
+      let totalPoints = 0;
+
+      // If question set uses batches and a batch is specified
+      if (questionSet.usesBatches && batchNumber) {
+        const batch = questionSet.batches.find(b => b.batchNumber === batchNumber && b.isActive);
+        
+        if (!batch) {
+          throw new Error(`Batch ${batchNumber} not found or inactive in question set "${questionSet.title}"`);
+        }
+
+        batchId = batch._id;
+        batchName = batch.name;
+        totalPoints = batch.totalPoints;
+
+        questions = batch.questions.map(q => ({
+          type: q.type,
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          points: q.points,
+          order: q.order,
+          originalQuestionId: q._id,
+        }));
+      } 
+      // Legacy: If question set doesn't use batches
+      else if (!questionSet.usesBatches) {
+        totalPoints = questionSet.totalPoints;
+
+        questions = questionSet.questions.map(q => ({
+          type: q.type,
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          points: q.points,
+          order: q.order,
+          originalQuestionId: q._id,
+        }));
+      } else {
+        throw new Error(`Question set "${questionSet.title}" uses batches but no batch number was specified`);
+      }
 
       return {
         questionSetId: questionSet._id,
-        title: questionSet.title,
+        batchNumber: batchNumber || undefined,
+        batchId: batchId || undefined,
+        batchName: batchName || undefined,
+        title: batchName ? `${questionSet.title} - ${batchName}` : questionSet.title,
         questions,
-        totalPoints: questionSet.totalPoints,
+        totalPoints,
         order: index + 1,
       };
     });
@@ -355,7 +457,7 @@ router.patch('/:id/toggle-active', verifyAdmin, async (req, res) => {
 });
 
 // @route   GET /api/quiz/:id/statistics
-// @desc    Get quiz statistics (total questions, points per set, etc.)
+// @desc    Get quiz statistics (total questions, points per set, batch info, etc.)
 // @access  Private (Admin only)
 router.get('/:id/statistics', verifyAdmin, async (req, res) => {
   try {
@@ -378,13 +480,52 @@ router.get('/:id/statistics', verifyAdmin, async (req, res) => {
         questionCount: qs.questions.length,
         totalPoints: qs.totalPoints,
         order: qs.order,
+        batchNumber: qs.batchNumber || null,
+        batchName: qs.batchName || null,
+        usesBatch: !!qs.batchNumber,
       })),
       duration: quiz.getTotalDurationInSeconds(),
+      batchConfiguration: quiz.batchConfiguration,
     };
 
     res.json({
       success: true,
       statistics,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error',
+      error: error.message,
+    });
+  }
+});
+
+// @route   GET /api/quiz/by-combination/:setId1/:setId2/:setId3/:setId4
+// @desc    Get all quizzes using a specific question set combination (ignoring batches)
+// @access  Private (Admin only)
+router.get('/by-combination/:setId1/:setId2/:setId3/:setId4', verifyAdmin, async (req, res) => {
+  try {
+    const { setId1, setId2, setId3, setId4 } = req.params;
+    const combination = [setId1, setId2, setId3, setId4];
+
+    const quizzes = await Quiz.find({
+      questionSetCombination: { $all: combination },
+      isActive: true,
+    })
+      .populate('createdBy', 'email')
+      .populate('questionSets.questionSetId', 'title');
+
+    // Filter to ensure exact match (all 4 sets, no more, no less)
+    const exactMatches = quizzes.filter(quiz => 
+      quiz.questionSetCombination.length === 4 &&
+      combination.every(id => quiz.questionSetCombination.some(qsId => qsId.toString() === id))
+    );
+
+    res.json({
+      success: true,
+      count: exactMatches.length,
+      quizzes: exactMatches,
     });
   } catch (error) {
     res.status(500).json({
