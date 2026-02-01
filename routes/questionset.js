@@ -218,7 +218,7 @@ router.post('/:id/batches', verifyAdmin, async (req, res) => {
 
     try {
       // Get batch info from body
-      const batchNumber = parseInt(req.body.batchNumber);
+      const batchNumber = 2;
       const batchName = req.body.name?.trim();
 
       if (isNaN(batchNumber) || batchNumber < 1) {
