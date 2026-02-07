@@ -621,7 +621,7 @@ router.get(
 // @route   POST /api/quiztaker/quiz/:quizId/submit
 // @desc    Submit question set answers (can be partial or final)
 // @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/submit", timeout('30s'), verifyQuizTaker, async (req, res) => {
+router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
   // Start a session for transaction
   const session = await mongoose.startSession();
 
