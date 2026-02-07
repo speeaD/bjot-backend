@@ -11,6 +11,9 @@ function parseQuestions(data) {
     try {
       const type = row.type?.trim().toLowerCase();
       const questionText = row.question?.trim();
+      const passage = row.passage?.trim() || '';
+      const diagram = row.diagram?.trim() || null;
+      const diagramAlt = row.diagramalt?.trim() || row['diagram alt']?.trim() || '';
       const points = parseInt(row.points) || 1;
 
       if (!type || !questionText) {
@@ -26,6 +29,9 @@ function parseQuestions(data) {
       const questionObj = {
         type,
         question: questionText,
+        passage,
+        diagram: diagram || null,
+        diagramAlt,
         points,
         order: index + 1,
       };
@@ -38,8 +44,9 @@ function parseQuestions(data) {
         }
         questionObj.options = optionsStr
           .split('|')
-          .map((opt) => opt.trim())
-          .filter((opt) => opt);
+          .map(opt => opt.trim())
+          .filter(opt => opt);
+
         questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim();
 
         if (!questionObj.correctAnswer) {
@@ -53,16 +60,10 @@ function parseQuestions(data) {
         } else if (answer === 'false' || answer === 'f' || answer === '0') {
           questionObj.correctAnswer = false;
         } else {
-          console.warn(`Skipping row ${index + 1}: True/False requires 'true' or 'false' answer`);
+          console.warn(`Skipping row ${index + 1}: True/False requires 'true' or 'false'`);
           return;
         }
-      } else if (type === 'fill-in-the-blanks') {
-        questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim();
-        if (!questionObj.correctAnswer) {
-          console.warn(`Skipping row ${index + 1}: Missing correct answer`);
-          return;
-        }
-      } else if (type === 'essay') {
+      } else if (type === 'fill-in-the-blanks' || type === 'essay') {
         questionObj.correctAnswer = row.correctanswer?.trim() || row['correct answer']?.trim() || '';
       }
 
@@ -74,7 +75,6 @@ function parseQuestions(data) {
 
   return questions;
 }
-
 // @route   POST /api/questionset/bulk-upload
 // @desc    Create a new question set via bulk upload (Excel/CSV)
 // @access  Private (Admin only)

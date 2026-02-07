@@ -5,13 +5,78 @@ const QuizTaker = require("../models/QuizTaker");
 const CBTSubmission = require("../models/CbtModel");
 const mongoose = require("mongoose");
 
+/**
+ * Helper function to shuffle an array (Fisher-Yates algorithm)
+ */
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+/**
+ * Helper function to get all questions from a question set
+ * Works with both legacy (questions array) and new batch structure
+ */
+function getAllQuestionsFromQuestionSet(questionSet) {
+  if (questionSet.usesBatches && questionSet.batches && questionSet.batches.length > 0) {
+    // Get questions from all active batches
+    const allQuestions = [];
+    
+    questionSet.batches.forEach(batch => {
+      if (batch.isActive && batch.questions && batch.questions.length > 0) {
+        batch.questions.forEach(question => {
+          allQuestions.push({
+            ...question.toObject(),
+            batchId: batch._id,
+            batchNumber: batch.batchNumber,
+            batchName: batch.name,
+          });
+        });
+      }
+    });
+    
+    return allQuestions;
+  } else if (questionSet.questions && questionSet.questions.length > 0) {
+    // Legacy structure - return questions as-is
+    return questionSet.questions.map(q => q.toObject());
+  }
+  
+  return [];
+}
+
+/**
+ * Helper function to find a question by ID in a question set
+ * Works with both legacy and batch structures
+ */
+function findQuestionById(questionSet, questionId) {
+  if (questionSet.usesBatches && questionSet.batches && questionSet.batches.length > 0) {
+    for (const batch of questionSet.batches) {
+      if (batch.questions && batch.questions.length > 0) {
+        const question = batch.questions.find(q => q._id.toString() === questionId);
+        if (question) {
+          return question;
+        }
+      }
+    }
+    return null;
+  } else if (questionSet.questions && questionSet.questions.length > 0) {
+    return questionSet.questions.find(q => q._id.toString() === questionId);
+  }
+  
+  return null;
+}
+
 // @route   GET /api/cbt/question-sets
 // @desc    Get all active question sets (subjects) for selection
 // @access  Public or with optional auth
 router.get("/question-sets", async (req, res) => {
   try {
     const questionSets = await QuestionSet.find({ isActive: true })
-      .select("title questionCount totalPoints")
+      .select("title questionCount totalPoints usesBatches")
       .sort({ title: 1 });
 
     res.json({
@@ -76,7 +141,7 @@ router.post("/start-session", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
-        accessCode: QuizTaker.generateAccessCode(), // Add this line
+        accessCode: QuizTaker.generateAccessCode(),
         questionSetCombination: questionSetIds,
         isActive: true,
       });
@@ -119,7 +184,7 @@ router.post("/start-session", async (req, res) => {
       }
     }
 
-    // Create session data
+    // Create session data with batch information
     const sessionData = {
       sessionId: new mongoose.Types.ObjectId().toString(),
       quizTakerId: quizTaker._id,
@@ -129,6 +194,8 @@ router.post("/start-session", async (req, res) => {
         order: index + 1,
         questionCount: qs.questionCount,
         totalPoints: qs.totalPoints,
+        usesBatches: qs.usesBatches,
+        batchCount: qs.usesBatches ? qs.batches.filter(b => b.isActive).length : 0,
       })),
       startedAt: new Date(),
     };
@@ -148,7 +215,8 @@ router.post("/start-session", async (req, res) => {
 });
 
 // @route   GET /api/cbt/question-set/:id/questions
-// @desc    Get questions for a specific question set (without answers)
+// @desc    Get randomized questions for a specific question set (without answers)
+//          Questions are collected from all active batches and randomized
 // @access  Public
 router.get("/question-set/:id/questions", async (req, res) => {
   try {
@@ -168,14 +236,36 @@ router.get("/question-set/:id/questions", async (req, res) => {
       });
     }
 
+    // Get all questions (from batches or legacy structure)
+    const allQuestions = getAllQuestionsFromQuestionSet(questionSet);
+
+    if (allQuestions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No questions available in this question set",
+      });
+    }
+
+    // Randomize questions
+    const randomizedQuestions = shuffleArray(allQuestions);
+
     // Remove correct answers from questions
-    const questionsWithoutAnswers = questionSet.questions.map((q) => ({
+    const questionsWithoutAnswers = randomizedQuestions.map((q) => ({
       _id: q._id,
       type: q.type,
       question: q.question,
-      options: q.options,
+      passage: q.passage || '',
+      diagram: q.diagram || null,
+      diagramAlt: q.diagramAlt || '',
+      options: q.options || [],
       points: q.points,
       order: q.order,
+      // Include batch info if using batches (useful for debugging/analytics)
+      ...(questionSet.usesBatches && {
+        batchId: q.batchId,
+        batchNumber: q.batchNumber,
+        batchName: q.batchName,
+      }),
     }));
 
     res.json({
@@ -185,6 +275,7 @@ router.get("/question-set/:id/questions", async (req, res) => {
         title: questionSet.title,
         totalPoints: questionSet.totalPoints,
         questionCount: questionSet.questionCount,
+        usesBatches: questionSet.usesBatches,
         questions: questionsWithoutAnswers,
       },
     });
@@ -198,7 +289,7 @@ router.get("/question-set/:id/questions", async (req, res) => {
 });
 
 // @route   POST /api/cbt/submit
-// @desc    Submit CBT answers
+// @desc    Submit CBT answers (multi-subject exam)
 // @access  Public
 router.post("/submit", async (req, res) => {
   try {
@@ -231,7 +322,10 @@ router.post("/submit", async (req, res) => {
     questionSets.forEach((questionSet) => {
       totalPoints += questionSet.totalPoints;
 
-      questionSet.questions.forEach((question) => {
+      // Get all questions from this question set (batch-aware)
+      const allQuestions = getAllQuestionsFromQuestionSet(questionSet);
+
+      allQuestions.forEach((question) => {
         const submittedAnswer = answers.find(
           (ans) => ans.questionId === question._id.toString(),
         );
@@ -302,29 +396,29 @@ router.post("/submit", async (req, res) => {
       });
     });
 
-    console.log("Grading results:", {
-      totalScore,
-      totalPoints: totalPoints > 0 ? Math.round((totalScore / totalPoints) * 400) : 0,
-      percentage:
-        totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
-    });
+    // Calculate percentage
+    const percentage =
+      totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0;
+
+    // Calculate time taken
+    const timeTaken = Math.floor((new Date() - new Date(startedAt)) / 1000);
 
     // Create submission record
     const submission = new CBTSubmission({
       quizTakerId,
-      questionSets: questionSets.map((qs, index) => ({
+      examType: "multi-subject", // Fixed: Added examType field
+      questionSets: questionSets.map((qs, index) => ({ // Fixed: Added index for order
         questionSetId: qs._id,
         title: qs.title,
-        order: index + 1,
+        order: index + 1, // Fixed: Added order field
       })),
       answers: gradedAnswers,
       score: totalScore,
       totalPoints,
-      percentage:
-        totalPoints > 0 ? Math.round((totalScore / totalPoints) * 100) : 0,
+      percentage,
       startedAt: new Date(startedAt),
       submittedAt: new Date(),
-      timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+      timeTaken,
     });
 
     await submission.save();
@@ -336,15 +430,13 @@ router.post("/submit", async (req, res) => {
           quizzesTaken: {
             score: totalScore,
             totalPoints: totalPoints,
-            percentage:
-              totalPoints > 0
-                ? Math.round((totalScore / totalPoints) * 100)
-                : 0,
-            timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
+            percentage,
+            timeTaken,
             examType: "multi-subject",
-            questionSets: questionSets.map((qs) => ({
+            questionSets: questionSets.map((qs, index) => ({ // Fixed: Added index for order
               questionSetId: qs._id,
               title: qs.title,
+              order: index + 1, // Fixed: Added order field
             })),
             completedAt: new Date(),
           },
@@ -373,6 +465,7 @@ router.post("/submit", async (req, res) => {
     });
   }
 });
+
 // @route   POST /api/cbt/start-single-subject
 // @desc    Start a single subject exam
 // @access  Public
@@ -413,8 +506,8 @@ router.post("/start-single-subject", async (req, res) => {
       quizTaker = new QuizTaker({
         email: email.toLowerCase().trim(),
         accountType: "premium",
-        accessCode: QuizTaker.generateAccessCode(), // Add this line
-        questionSetCombination: questionSetId,
+        accessCode: QuizTaker.generateAccessCode(),
+        questionSetCombination: [questionSetId], // Fixed: Wrap in array
         isActive: true,
       });
 
@@ -437,7 +530,7 @@ router.post("/start-single-subject", async (req, res) => {
       }
     }
 
-    // Create session data
+    // Create session data with batch information
     const sessionData = {
       sessionId: new mongoose.Types.ObjectId().toString(),
       quizTakerId: quizTaker._id,
@@ -447,6 +540,8 @@ router.post("/start-single-subject", async (req, res) => {
         title: questionSet.title,
         questionCount: questionSet.questionCount,
         totalPoints: questionSet.totalPoints,
+        usesBatches: questionSet.usesBatches,
+        batchCount: questionSet.usesBatches ? questionSet.batches.filter(b => b.isActive).length : 0,
       },
       startedAt: new Date(),
     };
@@ -502,7 +597,10 @@ router.post("/submit-single-subject", async (req, res) => {
     let totalScore = 0;
     const totalPoints = questionSet.totalPoints;
 
-    questionSet.questions.forEach((question) => {
+    // Get all questions from this question set (batch-aware)
+    const allQuestions = getAllQuestionsFromQuestionSet(questionSet);
+
+    allQuestions.forEach((question) => {
       const submittedAnswer = answers.find(
         (ans) => ans.questionId === question._id.toString(),
       );
@@ -597,7 +695,7 @@ router.post("/submit-single-subject", async (req, res) => {
                 ? Math.round((totalScore / totalPoints) * 100)
                 : 0,
             timeTaken: Math.floor((new Date() - new Date(startedAt)) / 1000),
-            examType: "single-subject", // or 'multi-subject'
+            examType: "single-subject",
             questionSets: [
               {
                 questionSetId: questionSet._id,
