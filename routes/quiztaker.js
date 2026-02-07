@@ -1,5 +1,5 @@
 const express = require("express");
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 const router = express.Router();
 const { verifyQuizTaker } = require("../middleware/auth");
 const QuizTaker = require("../models/QuizTaker");
@@ -23,7 +23,7 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         assignedQuizzes: quizTaker.assignedQuizzes,
-        
+
         createdAt: quizTaker.createdAt,
       },
     });
@@ -44,7 +44,7 @@ router.get("/profile", verifyQuizTaker, async (req, res) => {
     const quizTaker = req.quizTaker;
 
     const completedCount = quizTaker.assignedQuizzes.filter(
-      (aq) => aq.status === "completed"
+      (aq) => aq.status === "completed",
     ).length;
 
     res.json({
@@ -75,7 +75,7 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id);
 
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
+      (aq) => aq.quizId.toString() === req.params.quizId,
     );
 
     if (!assignedQuiz) {
@@ -140,161 +140,182 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
 // @route   GET /api/quiztaker/quiz/:quizId/question-set/:questionSetOrder
 // @desc    Get specific question set questions (without answers)
 // @access  Private (Quiz taker only)
-router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, async (req, res) => {
-  try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-    const questionSetOrder = parseInt(req.params.questionSetOrder);
+router.get(
+  "/quiz/:quizId/question-set/:questionSetOrder",
+  verifyQuizTaker,
+  async (req, res) => {
+    try {
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id);
+      const questionSetOrder = parseInt(req.params.questionSetOrder);
 
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
+      const assignedQuiz = quizTaker.assignedQuizzes.find(
+        (aq) => aq.quizId.toString() === req.params.quizId,
+      );
 
-    if (!assignedQuiz) {
-      return res.status(403).json({
+      if (!assignedQuiz) {
+        return res.status(403).json({
+          success: false,
+          message: "This quiz is not assigned to you",
+        });
+      }
+
+      const quiz = await Quiz.findById(req.params.quizId);
+
+      if (!quiz) {
+        return res.status(404).json({
+          success: false,
+          message: "Quiz not found",
+        });
+      }
+
+      const questionSet = quiz.questionSets.find(
+        (qs) => qs.order === questionSetOrder,
+      );
+
+      if (!questionSet) {
+        return res.status(404).json({
+          success: false,
+          message: "Question set not found",
+        });
+      }
+
+      const questionsWithoutAnswers = questionSet.questions.map((q) => ({
+        _id: q._id,
+        type: q.type,
+        question: q.question,
+        options: q.options,
+        points: q.points,
+        order: q.order,
+      }));
+
+      res.json({
+        success: true,
+        questionSet: {
+          _id: questionSet._id,
+          title: questionSet.title,
+          order: questionSet.order,
+          totalPoints: questionSet.totalPoints,
+          questions: questionsWithoutAnswers,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: "This quiz is not assigned to you",
+        message: "Server error",
+        error: error.message,
       });
     }
-
-    const quiz = await Quiz.findById(req.params.quizId);
-
-    if (!quiz) {
-      return res.status(404).json({
-        success: false,
-        message: "Quiz not found",
-      });
-    }
-
-    const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
-
-    if (!questionSet) {
-      return res.status(404).json({
-        success: false,
-        message: "Question set not found",
-      });
-    }
-
-    const questionsWithoutAnswers = questionSet.questions.map((q) => ({
-      _id: q._id,
-      type: q.type,
-      question: q.question,
-      options: q.options,
-      points: q.points,
-      order: q.order,
-    }));
-
-    res.json({
-      success: true,
-      questionSet: {
-        _id: questionSet._id,
-        title: questionSet.title,
-        order: questionSet.order,
-        totalPoints: questionSet.totalPoints,
-        questions: questionsWithoutAnswers,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
+  },
+);
 
 // @route   POST /api/quiztaker/quiz/:quizId/set-question-order
 // @desc    Set custom question set order for quiz taker
 // @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/set-question-order", verifyQuizTaker, async (req, res) => {
-  try {
-    const { questionSetOrder } = req.body;
+router.post(
+  "/quiz/:quizId/set-question-order",
+  verifyQuizTaker,
+  async (req, res) => {
+    try {
+      const { questionSetOrder } = req.body;
 
-    if (!questionSetOrder || !Array.isArray(questionSetOrder) || questionSetOrder.length !== 4) {
-      return res.status(400).json({
-        success: false,
-        message: "questionSetOrder must be an array of 4 numbers",
-      });
-    }
-
-    const sorted = [...questionSetOrder].sort();
-    if (sorted.join(',') !== '1,2,3,4') {
-      return res.status(400).json({
-        success: false,
-        message: "questionSetOrder must contain [1,2,3,4] in any order",
-      });
-    }
-
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot change order for completed quiz",
-      });
-    }
-
-    if (assignedQuiz.status === "in-progress" && assignedQuiz.questionSetProgress) {
-      const anyCompleted = assignedQuiz.questionSetProgress.some(
-        qsp => qsp.status === 'completed'
-      );
-      
-      if (anyCompleted) {
+      if (
+        !questionSetOrder ||
+        !Array.isArray(questionSetOrder) ||
+        questionSetOrder.length !== 4
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Cannot change order after submitting question sets",
+          message: "questionSetOrder must be an array of 4 numbers",
         });
       }
+
+      const sorted = [...questionSetOrder].sort();
+      if (sorted.join(",") !== "1,2,3,4") {
+        return res.status(400).json({
+          success: false,
+          message: "questionSetOrder must contain [1,2,3,4] in any order",
+        });
+      }
+
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id);
+
+      const assignedQuiz = quizTaker.assignedQuizzes.find(
+        (aq) => aq.quizId.toString() === req.params.quizId,
+      );
+
+      if (!assignedQuiz) {
+        return res.status(403).json({
+          success: false,
+          message: "This quiz is not assigned to you",
+        });
+      }
+
+      if (assignedQuiz.status === "completed") {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot change order for completed quiz",
+        });
+      }
+
+      if (
+        assignedQuiz.status === "in-progress" &&
+        assignedQuiz.questionSetProgress
+      ) {
+        const anyCompleted = assignedQuiz.questionSetProgress.some(
+          (qsp) => qsp.status === "completed",
+        );
+
+        if (anyCompleted) {
+          return res.status(400).json({
+            success: false,
+            message: "Cannot change order after submitting question sets",
+          });
+        }
+      }
+
+      assignedQuiz.selectedQuestionSetOrder = questionSetOrder;
+      quizTaker.initializeQuestionSetProgress(req.params.quizId);
+
+      assignedQuiz.questionSetProgress.forEach((qsp) => {
+        const indexInCustomOrder = questionSetOrder.indexOf(
+          qsp.questionSetOrder,
+        );
+        qsp.selectedOrder = indexInCustomOrder + 1;
+      });
+
+      assignedQuiz.currentQuestionSetOrder = questionSetOrder[0];
+
+      quizTaker.markModified("assignedQuizzes");
+      await quizTaker.save();
+
+      res.json({
+        success: true,
+        message: "Question set order saved successfully",
+        questionSetOrder: assignedQuiz.selectedQuestionSetOrder,
+        currentQuestionSetOrder: assignedQuiz.currentQuestionSetOrder,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Server error",
+        error: error.message,
+      });
     }
-
-    assignedQuiz.selectedQuestionSetOrder = questionSetOrder;
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-    
-    assignedQuiz.questionSetProgress.forEach(qsp => {
-      const indexInCustomOrder = questionSetOrder.indexOf(qsp.questionSetOrder);
-      qsp.selectedOrder = indexInCustomOrder + 1;
-    });
-
-    assignedQuiz.currentQuestionSetOrder = questionSetOrder[0];
-
-    quizTaker.markModified("assignedQuizzes");
-    await quizTaker.save();
-
-    res.json({
-      success: true,
-      message: "Question set order saved successfully",
-      questionSetOrder: assignedQuiz.selectedQuestionSetOrder,
-      currentQuestionSetOrder: assignedQuiz.currentQuestionSetOrder,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
+  },
+);
 
 // @route   GET /api/quiztaker/quiz/:quizId/progress
 // @desc    Get detailed progress for a quiz
 // @access  Private (Quiz taker only)
 router.get("/quiz/:quizId/progress", verifyQuizTaker, async (req, res) => {
   try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .populate('assignedQuizzes.quizId', 'settings.title questionSets');
+    const quizTaker = await QuizTaker.findById(req.quizTaker._id).populate(
+      "assignedQuizzes.quizId",
+      "settings.title questionSets",
+    );
 
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId._id.toString() === req.params.quizId
+      (aq) => aq.quizId._id.toString() === req.params.quizId,
     );
 
     if (!assignedQuiz) {
@@ -308,36 +329,40 @@ router.get("/quiz/:quizId/progress", verifyQuizTaker, async (req, res) => {
     await quizTaker.save();
 
     const quiz = assignedQuiz.quizId;
-    
+
     const progress = {
       quizId: quiz._id,
       quizTitle: quiz.settings.title,
       status: assignedQuiz.status,
       startedAt: assignedQuiz.startedAt,
       completedAt: assignedQuiz.completedAt,
-      selectedQuestionSetOrder: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
+      selectedQuestionSetOrder: assignedQuiz.selectedQuestionSetOrder || [
+        1, 2, 3, 4,
+      ],
       currentQuestionSetOrder: assignedQuiz.currentQuestionSetOrder,
       questionSets: [],
       overallProgress: {
         completed: 0,
         total: 4,
         percentage: 0,
-      }
+      },
     };
 
-    const questionSetDetails = quiz.questionSets.map(qs => ({
+    const questionSetDetails = quiz.questionSets.map((qs) => ({
       order: qs.order,
       title: qs.title,
       totalPoints: qs.totalPoints,
       questionCount: qs.questions.length,
     }));
 
-    assignedQuiz.questionSetProgress.forEach(qsp => {
-      const details = questionSetDetails.find(d => d.order === qsp.questionSetOrder);
-      
+    assignedQuiz.questionSetProgress.forEach((qsp) => {
+      const details = questionSetDetails.find(
+        (d) => d.order === qsp.questionSetOrder,
+      );
+
       progress.questionSets.push({
         questionSetOrder: qsp.questionSetOrder,
-        title: details?.title || 'Unknown',
+        title: details?.title || "Unknown",
         selectedOrder: qsp.selectedOrder,
         status: qsp.status,
         startedAt: qsp.startedAt,
@@ -345,7 +370,10 @@ router.get("/quiz/:quizId/progress", verifyQuizTaker, async (req, res) => {
         score: qsp.score,
         totalPoints: qsp.totalPoints || details?.totalPoints || 0,
         questionCount: details?.questionCount || 0,
-        percentage: qsp.totalPoints > 0 ? Math.round((qsp.score / qsp.totalPoints) * 100) : 0,
+        percentage:
+          qsp.totalPoints > 0
+            ? Math.round((qsp.score / qsp.totalPoints) * 100)
+            : 0,
       });
     });
 
@@ -357,11 +385,13 @@ router.get("/quiz/:quizId/progress", verifyQuizTaker, async (req, res) => {
     });
 
     const completedCount = assignedQuiz.questionSetProgress.filter(
-      qsp => qsp.status === 'completed'
+      (qsp) => qsp.status === "completed",
     ).length;
-    
+
     progress.overallProgress.completed = completedCount;
-    progress.overallProgress.percentage = Math.round((completedCount / 4) * 100);
+    progress.overallProgress.percentage = Math.round(
+      (completedCount / 4) * 100,
+    );
 
     res.json({
       success: true,
@@ -384,7 +414,7 @@ router.post("/quiz/:quizId/start", verifyQuizTaker, async (req, res) => {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id);
 
     const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
+      (aq) => aq.quizId.toString() === req.params.quizId,
     );
 
     if (!assignedQuiz) {
@@ -411,7 +441,7 @@ router.post("/quiz/:quizId/start", verifyQuizTaker, async (req, res) => {
 
     assignedQuiz.status = "in-progress";
     assignedQuiz.startedAt = new Date();
-    
+
     quizTaker.initializeQuestionSetProgress(req.params.quizId);
 
     await quizTaker.save();
@@ -433,160 +463,168 @@ router.post("/quiz/:quizId/start", verifyQuizTaker, async (req, res) => {
 // @route   POST /api/quiztaker/quiz/:quizId/question-set/:questionSetOrder/start
 // @desc    Start a specific question set
 // @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/question-set/:questionSetOrder/start", verifyQuizTaker, async (req, res) => {
-  try {
-    const questionSetOrder = parseInt(req.params.questionSetOrder);
+router.post(
+  "/quiz/:quizId/question-set/:questionSetOrder/start",
+  verifyQuizTaker,
+  async (req, res) => {
+    try {
+      const questionSetOrder = parseInt(req.params.questionSetOrder);
 
-    if (questionSetOrder < 1 || questionSetOrder > 4) {
-      return res.status(400).json({
+      if (questionSetOrder < 1 || questionSetOrder > 4) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid question set order (must be 1-4)",
+        });
+      }
+
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id);
+
+      const assignedQuiz = quizTaker.assignedQuizzes.find(
+        (aq) => aq.quizId.toString() === req.params.quizId,
+      );
+
+      if (!assignedQuiz) {
+        return res.status(403).json({
+          success: false,
+          message: "This quiz is not assigned to you",
+        });
+      }
+
+      if (assignedQuiz.status === "completed") {
+        return res.status(400).json({
+          success: false,
+          message: "Quiz already completed",
+        });
+      }
+
+      quizTaker.initializeQuestionSetProgress(req.params.quizId);
+
+      const qsProgress = assignedQuiz.questionSetProgress.find(
+        (qsp) => qsp.questionSetOrder === questionSetOrder,
+      );
+
+      if (!qsProgress) {
+        return res.status(404).json({
+          success: false,
+          message: "Question set not found",
+        });
+      }
+
+      if (qsProgress.status === "completed") {
+        return res.status(400).json({
+          success: false,
+          message: "This question set has already been completed",
+        });
+      }
+
+      if (assignedQuiz.status === "pending") {
+        assignedQuiz.status = "in-progress";
+        assignedQuiz.startedAt = new Date();
+      }
+
+      if (qsProgress.status === "not-started") {
+        qsProgress.status = "in-progress";
+        qsProgress.startedAt = new Date();
+      }
+
+      assignedQuiz.currentQuestionSetOrder = questionSetOrder;
+
+      quizTaker.markModified("assignedQuizzes");
+      await quizTaker.save();
+
+      res.json({
+        success: true,
+        message: "Question set started successfully",
+        questionSetOrder,
+        startedAt: qsProgress.startedAt,
+      });
+    } catch (error) {
+      res.status(500).json({
         success: false,
-        message: "Invalid question set order (must be 1-4)",
+        message: "Server error",
+        error: error.message,
       });
     }
-
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
-
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Quiz already completed",
-      });
-    }
-
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-
-    const qsProgress = assignedQuiz.questionSetProgress.find(
-      qsp => qsp.questionSetOrder === questionSetOrder
-    );
-
-    if (!qsProgress) {
-      return res.status(404).json({
-        success: false,
-        message: "Question set not found",
-      });
-    }
-
-    if (qsProgress.status === 'completed') {
-      return res.status(400).json({
-        success: false,
-        message: "This question set has already been completed",
-      });
-    }
-
-    if (assignedQuiz.status === 'pending') {
-      assignedQuiz.status = 'in-progress';
-      assignedQuiz.startedAt = new Date();
-    }
-
-    if (qsProgress.status === 'not-started') {
-      qsProgress.status = 'in-progress';
-      qsProgress.startedAt = new Date();
-    }
-
-    assignedQuiz.currentQuestionSetOrder = questionSetOrder;
-
-    quizTaker.markModified("assignedQuizzes");
-    await quizTaker.save();
-
-    res.json({
-      success: true,
-      message: "Question set started successfully",
-      questionSetOrder,
-      startedAt: qsProgress.startedAt,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
+  },
+);
 
 // @route   GET /api/quiztaker/quiz/:quizId/next-question-set
 // @desc    Get the next question set to answer based on custom order
 // @access  Private (Quiz taker only)
-router.get("/quiz/:quizId/next-question-set", verifyQuizTaker, async (req, res) => {
-  try {
-    const quizTaker = await QuizTaker.findById(req.quizTaker._id);
+router.get(
+  "/quiz/:quizId/next-question-set",
+  verifyQuizTaker,
+  async (req, res) => {
+    try {
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id);
 
-    const assignedQuiz = quizTaker.assignedQuizzes.find(
-      (aq) => aq.quizId.toString() === req.params.quizId
-    );
-
-    if (!assignedQuiz) {
-      return res.status(403).json({
-        success: false,
-        message: "This quiz is not assigned to you",
-      });
-    }
-
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Quiz already completed",
-      });
-    }
-
-    quizTaker.initializeQuestionSetProgress(req.params.quizId);
-
-    const customOrder = assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4];
-
-    let nextQuestionSetOrder = null;
-    
-    for (const order of customOrder) {
-      const qsProgress = assignedQuiz.questionSetProgress.find(
-        qsp => qsp.questionSetOrder === order
+      const assignedQuiz = quizTaker.assignedQuizzes.find(
+        (aq) => aq.quizId.toString() === req.params.quizId,
       );
-      
-      if (qsProgress && qsProgress.status !== 'completed') {
-        nextQuestionSetOrder = order;
-        break;
-      }
-    }
 
-    if (!nextQuestionSetOrder) {
-      return res.json({
+      if (!assignedQuiz) {
+        return res.status(403).json({
+          success: false,
+          message: "This quiz is not assigned to you",
+        });
+      }
+
+      if (assignedQuiz.status === "completed") {
+        return res.status(400).json({
+          success: false,
+          message: "Quiz already completed",
+        });
+      }
+
+      quizTaker.initializeQuestionSetProgress(req.params.quizId);
+
+      const customOrder = assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4];
+
+      let nextQuestionSetOrder = null;
+
+      for (const order of customOrder) {
+        const qsProgress = assignedQuiz.questionSetProgress.find(
+          (qsp) => qsp.questionSetOrder === order,
+        );
+
+        if (qsProgress && qsProgress.status !== "completed") {
+          nextQuestionSetOrder = order;
+          break;
+        }
+      }
+
+      if (!nextQuestionSetOrder) {
+        return res.json({
+          success: true,
+          message: "All question sets completed",
+          nextQuestionSetOrder: null,
+          allCompleted: true,
+        });
+      }
+
+      res.json({
         success: true,
-        message: "All question sets completed",
-        nextQuestionSetOrder: null,
-        allCompleted: true,
+        nextQuestionSetOrder,
+        allCompleted: false,
+        customOrder,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: "Server error",
+        error: error.message,
       });
     }
-
-    res.json({
-      success: true,
-      nextQuestionSetOrder,
-      allCompleted: false,
-      customOrder,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-});
+  },
+);
 
 // @route   POST /api/quiztaker/quiz/:quizId/submit
 // @desc    Submit question set answers (can be partial or final)
 // @access  Private (Quiz taker only)
-router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
+router.post("/quiz/:quizId/submit", timeout('30s'), verifyQuizTaker, async (req, res) => {
   // Start a session for transaction
   const session = await mongoose.startSession();
-  
+
   const MAX_RETRIES = 3;
   let attempt = 0;
 
@@ -600,6 +638,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       // Validation
       if (!questionSetOrder || questionSetOrder < 1 || questionSetOrder > 4) {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(400).json({
           success: false,
           message: "Invalid questionSetOrder. Must be between 1 and 4",
@@ -608,6 +647,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       if (!answers || !Array.isArray(answers)) {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(400).json({
           success: false,
           message: "Answers must be provided as an array",
@@ -615,14 +655,17 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       }
 
       // 🔑 Fetch fresh documents with session
-      const quizTaker = await QuizTaker.findById(req.quizTaker._id).session(session);
+      const quizTaker = await QuizTaker.findById(req.quizTaker._id).session(
+        session,
+      );
 
       const assignedQuiz = quizTaker.assignedQuizzes.find(
-        (aq) => aq.quizId.toString() === req.params.quizId
+        (aq) => aq.quizId.toString() === req.params.quizId,
       );
 
       if (!assignedQuiz) {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(403).json({
           success: false,
           message: "This quiz is not assigned to you",
@@ -631,6 +674,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       if (assignedQuiz.status === "completed") {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(400).json({
           success: false,
           message: "You have already completed this quiz",
@@ -641,16 +685,20 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       if (!quiz) {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(404).json({
           success: false,
           message: "Quiz not found",
         });
       }
 
-      const questionSet = quiz.questionSets.find(qs => qs.order === questionSetOrder);
+      const questionSet = quiz.questionSets.find(
+        (qs) => qs.order === questionSetOrder,
+      );
 
       if (!questionSet) {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(404).json({
           success: false,
           message: "Question set not found",
@@ -658,17 +706,21 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       }
 
       // Initialize progress if needed
-      if (!assignedQuiz.questionSetProgress || assignedQuiz.questionSetProgress.length === 0) {
+      if (
+        !assignedQuiz.questionSetProgress ||
+        assignedQuiz.questionSetProgress.length === 0
+      ) {
         quizTaker.initializeQuestionSetProgress(req.params.quizId);
       }
 
       const qsProgress = assignedQuiz.questionSetProgress.find(
-        qsp => qsp.questionSetOrder === questionSetOrder
+        (qsp) => qsp.questionSetOrder === questionSetOrder,
       );
 
       // 🔒 CRITICAL: Prevent duplicate submissions of same question set
-      if (qsProgress && qsProgress.status === 'completed') {
+      if (qsProgress && qsProgress.status === "completed") {
         await session.abortTransaction();
+        await session.endSession();
         return res.status(400).json({
           success: false,
           message: "This question set has already been submitted",
@@ -685,7 +737,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       let submission = await QuizSubmission.findOne({
         quizId: quiz._id,
         quizTakerId: quizTaker._id,
-        status: 'in-progress'
+        status: "in-progress",
       }).session(session);
 
       const isNewSubmission = !submission;
@@ -695,7 +747,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
         const existingSubmissionsCount = await QuizSubmission.countDocuments({
           quizId: quiz._id,
           quizTakerId: quizTaker._id,
-          status: { $in: ['auto-graded', 'pending-manual-grading', 'graded'] }
+          status: { $in: ["auto-graded", "pending-manual-grading", "graded"] },
         }).session(session);
 
         submission = new QuizSubmission({
@@ -708,8 +760,10 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
           timeTaken: 0,
           score: 0,
           totalPoints: quiz.totalPoints,
-          status: 'in-progress',
-          questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [1, 2, 3, 4],
+          status: "in-progress",
+          questionSetOrderUsed: assignedQuiz.selectedQuestionSetOrder || [
+            1, 2, 3, 4,
+          ],
           attemptNumber: existingSubmissionsCount + 1,
         });
       }
@@ -721,11 +775,13 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       answers.forEach((submittedAnswer) => {
         const question = questionSet.questions.find(
-          q => q._id.toString() === submittedAnswer.questionId
+          (q) => q._id.toString() === submittedAnswer.questionId,
         );
 
         if (!question) {
-          console.warn(`Question ${submittedAnswer.questionId} not found in question set ${questionSetOrder}`);
+          console.warn(
+            `Question ${submittedAnswer.questionId} not found in question set ${questionSetOrder}`,
+          );
           return;
         }
 
@@ -741,7 +797,9 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
         switch (question.type) {
           case "multiple-choice":
-            if (submittedAnswer.answer.trim() === question.correctAnswer.trim()) {
+            if (
+              submittedAnswer.answer.trim() === question.correctAnswer.trim()
+            ) {
               answerObj.isCorrect = true;
               answerObj.pointsAwarded = question.points;
               questionSetScore += question.points;
@@ -764,8 +822,12 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
             break;
 
           case "fill-in-the-blanks":
-            const submittedAns = String(submittedAnswer.answer).trim().toLowerCase();
-            const correctAns = String(question.correctAnswer).trim().toLowerCase();
+            const submittedAns = String(submittedAnswer.answer)
+              .trim()
+              .toLowerCase();
+            const correctAns = String(question.correctAnswer)
+              .trim()
+              .toLowerCase();
 
             if (submittedAns === correctAns) {
               answerObj.isCorrect = true;
@@ -787,19 +849,20 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       // 🔑 Remove old answers for this question set (prevent duplicates)
       submission.answers = submission.answers.filter(
-        ans => ans.questionSetOrder !== questionSetOrder
+        (ans) => ans.questionSetOrder !== questionSetOrder,
       );
 
       submission.answers.push(...gradedAnswers);
 
       // 🔑 Update or add question set submission tracking
       const existingQSSubmission = submission.questionSetSubmissions.find(
-        qss => qss.questionSetOrder === questionSetOrder
+        (qss) => qss.questionSetOrder === questionSetOrder,
       );
 
-      const orderAnswered = assignedQuiz.questionSetProgress.filter(
-        qsp => qsp.status === 'completed'
-      ).length + 1;
+      const orderAnswered =
+        assignedQuiz.questionSetProgress.filter(
+          (qsp) => qsp.status === "completed",
+        ).length + 1;
 
       if (existingQSSubmission) {
         // Update existing
@@ -820,25 +883,35 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       // Calculate total score
       submission.score = submission.answers.reduce(
-        (sum, answer) => sum + answer.pointsAwarded, 0
+        (sum, answer) => sum + answer.pointsAwarded,
+        0,
       );
 
       // Update question set progress
       if (qsProgress) {
-        qsProgress.status = 'completed';
+        qsProgress.status = "completed";
         qsProgress.completedAt = new Date();
         qsProgress.score = questionSetScore;
         qsProgress.totalPoints = questionSet.totalPoints;
       }
 
-      const hasAnyEssay = submission.answers.some(ans => ans.questionType === 'essay');
-      
+      const hasAnyEssay = submission.answers.some(
+        (ans) => ans.questionType === "essay",
+      );
+
+      submission.percentage =
+        submission.totalPoints > 0
+          ? Math.round((submission.score / submission.totalPoints) * 100)
+          : 0;
+
       if (isFinalSubmission) {
         const endTime = new Date();
         const startTime = new Date(assignedQuiz.startedAt);
         submission.timeTaken = Math.floor((endTime - startTime) / 1000);
         submission.submittedAt = endTime;
-        submission.status = hasAnyEssay ? "pending-manual-grading" : "auto-graded";
+        submission.status = hasAnyEssay
+          ? "pending-manual-grading"
+          : "auto-graded";
 
         assignedQuiz.status = "completed";
         assignedQuiz.completedAt = endTime;
@@ -850,10 +923,10 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
           totalPoints: submission.totalPoints,
           percentage: submission.percentage,
           timeTaken: submission.timeTaken,
-          examType: 'multi-subject',
-          questionSets: quiz.questionSets.map(qs => ({
+          examType: "multi-subject",
+          questionSets: quiz.questionSets.map((qs) => ({
             questionSetId: qs.questionSetId,
-            title: qs.title
+            title: qs.title,
           })),
           completedAt: endTime,
           attemptNumber: submission.attemptNumber || 1,
@@ -870,11 +943,13 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       // Commit transaction
       await session.commitTransaction();
-
+      await session.endSession();
       // Success! Return response
       return res.json({
         success: true,
-        message: isFinalSubmission ? "Quiz submitted successfully" : "Question set submitted successfully",
+        message: isFinalSubmission
+          ? "Quiz submitted successfully"
+          : "Question set submitted successfully",
         submission: {
           id: submission._id,
           questionSetScore: questionSetScore,
@@ -888,31 +963,35 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
           attemptNumber: submission.attemptNumber,
         },
       });
-
     } catch (error) {
       // Abort transaction on any error
       await session.abortTransaction();
 
       // Check if it's a version error
-      if (error.name === 'VersionError') {
+      if (error.name === "VersionError") {
         attempt++;
-        console.log(`Version conflict on attempt ${attempt}/${MAX_RETRIES}, retrying...`);
-        
+        console.log(
+          `Version conflict on attempt ${attempt}/${MAX_RETRIES}, retrying...`,
+        );
+
         if (attempt >= MAX_RETRIES) {
           console.error("Max retries reached for version conflict:", error);
           await session.endSession();
           return res.status(409).json({
             success: false,
-            message: "Unable to save due to concurrent updates. Please try again.",
+            message:
+              "Unable to save due to concurrent updates. Please try again.",
             error: error.message,
           });
         }
-        
+
         // Wait before retry (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt - 1)));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 100 * Math.pow(2, attempt - 1)),
+        );
         continue; // Retry
       }
-      
+
       // Other errors - don't retry
       console.error("Submit quiz error:", error);
       await session.endSession();
@@ -934,7 +1013,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
   try {
     const submission = await QuizSubmission.findById(
-      req.params.submissionId
+      req.params.submissionId,
     ).populate("quizId");
 
     if (!submission) {
@@ -988,14 +1067,14 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
         const questionSetData = {
           questionSetTitle: questionSet.title,
           order: questionSet.order,
-          answers: []
+          answers: [],
         };
 
         // Get all questions in this question set
         for (const question of questionSet.questions) {
           // Find the submitted answer for this question
           const submittedAnswer = submission.answers.find(
-            ans => ans.questionId.toString() === question._id.toString()
+            (ans) => ans.questionId.toString() === question._id.toString(),
           );
 
           if (submittedAnswer) {
@@ -1036,7 +1115,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
 
     res.json(responseData);
   } catch (error) {
-    console.error('Submission results error:', error);
+    console.error("Submission results error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -1050,10 +1129,10 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
 router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
   try {
     const quizTaker = await QuizTaker.findById(req.quizTaker._id)
-      .select('quizzesTaken')
+      .select("quizzesTaken")
       .populate({
-        path: 'quizzesTaken.quizId',
-        select: 'settings.title settings.isQuizChallenge'
+        path: "quizzesTaken.quizId",
+        select: "settings.title settings.isQuizChallenge",
       });
 
     if (!quizTaker) {
@@ -1064,8 +1143,9 @@ router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
     }
 
     // Sort by completedAt (most recent first)
-    const sortedQuizzes = quizTaker.quizzesTaken
-      .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+    const sortedQuizzes = quizTaker.quizzesTaken.sort(
+      (a, b) => new Date(b.completedAt) - new Date(a.completedAt),
+    );
 
     res.json({
       success: true,
@@ -1073,12 +1153,16 @@ router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
       submissions: sortedQuizzes.map((quiz) => ({
         id: quiz._id,
         quizId: quiz.quizId?._id,
-        quizTitle: quiz.quizId?.settings?.title || 'CBT Exam',
+        quizTitle: quiz.quizId?.settings?.title || "CBT Exam",
         score: quiz.score || 0,
-        totalPoints: quiz.totalPoints > 0 ? Math.round((quiz.score / quiz.totalPoints) * 400) : 0,
-        percentage: quiz.totalPoints > 0 
-          ? Math.round((quiz.score / quiz.totalPoints) * 100) 
-          : 0,
+        totalPoints:
+          quiz.totalPoints > 0
+            ? Math.round((quiz.score / quiz.totalPoints) * 400)
+            : 0,
+        percentage:
+          quiz.totalPoints > 0
+            ? Math.round((quiz.score / quiz.totalPoints) * 100)
+            : 0,
         completedAt: quiz.completedAt,
       })),
     });
