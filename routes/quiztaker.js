@@ -183,6 +183,9 @@ router.get(
         _id: q._id,
         type: q.type,
         question: q.question,
+        passage: q.passage, // ADD THIS
+        diagram: q.diagram, // ADD THIS
+        diagramAlt: q.diagramAlt, // ADD THIS
         options: q.options,
         points: q.points,
         order: q.order,
