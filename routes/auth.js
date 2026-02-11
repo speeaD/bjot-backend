@@ -182,7 +182,18 @@ router.post("/quiztaker/login", async (req, res) => {
 
 router.post("/quiztaker/register", async (req, res) => {
   try {
-    const { accountType, firstname, lastname, email, questionSetCombination } =
+    const { accountType, 
+      firstname, 
+      lastname, 
+      email, 
+      questionSetCombination,
+      phone,
+      parentName,
+      parentPhone,
+      department,
+      course,
+      firstJamb,
+      lastJambScore} =
       req.body;
     if (
       !accountType ||
@@ -220,7 +231,14 @@ router.post("/quiztaker/register", async (req, res) => {
       email: email.trim(),
       questionSetCombination,
       accessCode,
-      isActive: false, // New accounts are inactive by default,
+      isActive: false, // New accounts are inactive by default
+      phone: phone || undefined,
+      parentName: parentName?.trim() || undefined,
+      parentPhone: parentPhone || undefined,
+      department: department || undefined,
+      course: course?.trim() || undefined,
+      firstJamb: firstJamb ?? true,
+      lastJambScore: lastJambScore ?? 0,
     });
 
     await quizTaker.save();

@@ -12,21 +12,20 @@ const QuizQuestionSchema = new mongoose.Schema(
       required: true,
     },
     passage: {
-      type: String,
-      default: "",
-      trim: true,
-    },
-    // NEW: Optional diagram/image reference
-    diagram: {
-      type: String, // URL to image (e.g. Cloudinary, S3, or your own storage)
-      default: null,
-    },
-    diagramAlt: {
-      // Optional accessibility text
-      type: String,
-      default: "",
-      trim: true,
-    },
+    type: String,
+    default: '',
+    trim: true,
+  },
+  // NEW: Optional diagram/image reference
+  diagram: {
+    type: String,           // URL to image (e.g. Cloudinary, S3, or your own storage)
+    default: null,
+  },
+  diagramAlt: {             // Optional accessibility text
+    type: String,
+    default: '',
+    trim: true,
+  },
     options: [
       {
         type: String,

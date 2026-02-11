@@ -47,7 +47,41 @@ const QuizTakerSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
-  
+  phone: {
+    type: Number,
+    required: false,
+  },
+
+  firstJamb: {
+    type: Boolean,
+    default: true,
+  },
+
+  lastJambScore: {
+    type: Number,
+    default: 0,
+  },
+
+  parentName: {
+    type: String,
+    trim: true,
+  },
+
+  parentPhone: {
+    type: Number,
+  },
+
+  department: {
+    type: String,
+    enum: ['Sciences', 'Arts', 'Commercial'],
+    trim: true,
+  },
+
+  course: {
+    type: String,
+    trim: true,
+  },
+
   email: {
     type: String,
     required: true,
