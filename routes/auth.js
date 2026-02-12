@@ -207,6 +207,19 @@ router.post("/quiztaker/register", async (req, res) => {
         message: "Please provide all required fields",
       });
     }
+
+    if (
+      !questionSetCombination ||
+      !Array.isArray(questionSetCombination) ||
+      questionSetCombination.length !== 4
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please provide a valid question set combination (array of 4 question set IDs)",
+      });
+    }
+    
     //check for existing quiz taker
     const existingQuizTaker = await QuizTaker.findOne({ email: email.trim() });
     if (existingQuizTaker) {
@@ -229,7 +242,7 @@ router.post("/quiztaker/register", async (req, res) => {
       accountType,
       name: `${firstname.trim()} ${lastname.trim()}`,
       email: email.trim(),
-      questionSetCombination,
+      questionSetCombination: 
       accessCode,
       isActive: false, // New accounts are inactive by default
       phone: phone || undefined,
