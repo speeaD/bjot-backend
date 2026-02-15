@@ -242,7 +242,7 @@ router.post("/quiztaker/register", async (req, res) => {
       accountType,
       name: `${firstname.trim()} ${lastname.trim()}`,
       email: email.trim(),
-      questionSetCombination: 
+      questionSetCombination: questionSetCombination,
       accessCode,
       isActive: false, // New accounts are inactive by default
       phone: phone || undefined,
