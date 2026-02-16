@@ -51,6 +51,7 @@ app.use('/api/questionset', require('./routes/questionset'));
 app.use('/api/public/quiz', require('./routes/public.js'));
 app.use('/api/cbt', require('./routes/cbt.js'));
 app.use('/api/games/scholarswager', require('./routes/scholarswager.js'));
+app.use('/api/attendance', require('./routes/attendance.js'))
 
 // Test route to verify server is working
 app.get('/', (req, res) => {
