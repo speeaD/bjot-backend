@@ -5,8 +5,9 @@ const Schedule = require('../models/Schedule');
 // Get student's classes for today
 exports.getTodaysClasses = async (req, res) => {
   try {
-    const studentId = req.student._id; // Assuming auth middleware sets req.student
-    const student = req.student;
+    const studentId = req.quizTaker._id;
+    const student = req.quizTaker; // Assuming auth middleware sets req.student
+    
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -62,7 +63,7 @@ exports.getTodaysClasses = async (req, res) => {
 exports.markAttendance = async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const studentId = req.student._id;
+    const studentId = req.quizTaker._id;
     
     const record = await AttendanceRecord.markAttendance(
       sessionId,
@@ -87,7 +88,7 @@ exports.markAttendance = async (req, res) => {
 // Get student's attendance history
 exports.getMyAttendanceHistory = async (req, res) => {
   try {
-    const studentId = req.student._id;
+    const studentId = req.quizTaker._id;
     const { limit = 20, skip = 0 } = req.query;
     
     console.log('Fetching attendance history for student:', studentId);
@@ -144,7 +145,7 @@ exports.getMyAttendanceHistory = async (req, res) => {
 // Get student's weekly schedule
 exports.getMyWeeklySchedule = async (req, res) => {
   try {
-    const student = req.student;
+    const student = req.quizTaker;
     
     console.log('Fetching weekly schedule for department:', student.department);
     
