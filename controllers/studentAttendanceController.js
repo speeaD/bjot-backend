@@ -2,12 +2,17 @@ const AttendanceSession = require('../models/AttendanceSession');
 const AttendanceRecord = require('../models/AttendanceRecord');
 const Schedule = require('../models/Schedule');
 
-// Get student's classes for today
+// Get student's classes for today (FILTERED by subject combination)
 exports.getTodaysClasses = async (req, res) => {
   try {
     const studentId = req.quizTaker._id;
-    const student = req.quizTaker; // Assuming auth middleware sets req.student
+    const student = req.quizTaker;
     
+    console.log('Getting today\'s classes for student:', {
+      id: studentId,
+      department: student.department,
+      questionSetCombination: student.questionSetCombination
+    });
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -25,9 +30,37 @@ exports.getTodaysClasses = async (req, res) => {
     .populate('questionSet')
     .sort({ scheduledStartTime: 1 });
     
-    // Check attendance status for each session
+    console.log(`Found ${sessions.length} total sessions for ${student.department}`);
+    
+    // ✅ FILTER sessions based on student's questionSetCombination
+    let filteredSessions = sessions;
+    
+    if (student.questionSetCombination && student.questionSetCombination.length > 0) {
+      // Convert student's question set IDs to strings for comparison
+      const studentSubjectIds = student.questionSetCombination.map(id => id.toString());
+      
+      // Only show sessions where questionSet matches student's combination
+      filteredSessions = sessions.filter(session => {
+        const sessionQuestionSetId = session.questionSet?._id?.toString() || session.questionSet?.toString();
+        const isInCombination = studentSubjectIds.includes(sessionQuestionSetId);
+        
+        console.log('Session filter check:', {
+          sessionSubject: session.questionSetTitle,
+          sessionQuestionSetId,
+          isInCombination
+        });
+        
+        return isInCombination;
+      });
+      
+      console.log(`Filtered to ${filteredSessions.length} sessions matching student's subject combination`);
+    } else {
+      console.log('Student has no questionSetCombination, showing all sessions');
+    }
+    
+    // Check attendance status for each filtered session
     const sessionsWithStatus = await Promise.all(
-      sessions.map(async (session) => {
+      filteredSessions.map(async (session) => {
         const attendanceRecord = await AttendanceRecord.findOne({
           session: session._id,
           student: studentId,
@@ -64,12 +97,49 @@ exports.markAttendance = async (req, res) => {
   try {
     const { sessionId } = req.params;
     const studentId = req.quizTaker._id;
+    const student = req.quizTaker;
+    
+    console.log('Marking attendance:', {
+      sessionId,
+      studentId,
+      department: student.department
+    });
+    
+    // ✅ VERIFY session belongs to student's subject combination
+    const session = await AttendanceSession.findById(sessionId);
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found',
+      });
+    }
+    
+    // Check if session's questionSet is in student's combination
+    if (student.questionSetCombination && student.questionSetCombination.length > 0) {
+      const studentSubjectIds = student.questionSetCombination.map(id => id.toString());
+      const sessionQuestionSetId = session.questionSet.toString();
+      
+      if (!studentSubjectIds.includes(sessionQuestionSetId)) {
+        console.log('Student attempted to mark attendance for non-enrolled subject:', {
+          sessionSubject: session.questionSetTitle,
+          studentCombination: studentSubjectIds
+        });
+        
+        return res.status(403).json({
+          success: false,
+          message: 'You are not enrolled in this subject',
+        });
+      }
+    }
     
     const record = await AttendanceRecord.markAttendance(
       sessionId,
       studentId,
       'student'
     );
+    
+    console.log('Attendance marked successfully:', record._id);
     
     res.status(200).json({
       success: true,
@@ -85,23 +155,40 @@ exports.markAttendance = async (req, res) => {
   }
 };
 
-// Get student's attendance history
+// Get student's attendance history (FILTERED by subject combination)
 exports.getMyAttendanceHistory = async (req, res) => {
   try {
     const studentId = req.quizTaker._id;
+    const student = req.quizTaker;
     const { limit = 20, skip = 0 } = req.query;
     
     console.log('Fetching attendance history for student:', studentId);
     
-    // Fetch records - remove nested populate which might be causing the error
+    // Fetch records
     const records = await AttendanceRecord.find({ student: studentId })
-      .populate('session') // Just populate session, not nested questionSet
+      .populate('session')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
-      .lean(); // Use lean for better performance
+      .lean();
     
     console.log(`Found ${records.length} attendance records`);
+    
+    // ✅ FILTER records based on student's subject combination
+    let filteredRecords = records;
+    
+    if (student.questionSetCombination && student.questionSetCombination.length > 0) {
+      const studentSubjectIds = student.questionSetCombination.map(id => id.toString());
+      
+      filteredRecords = records.filter(record => {
+        if (!record.session || !record.session.questionSet) return false;
+        
+        const sessionQuestionSetId = record.session.questionSet.toString();
+        return studentSubjectIds.includes(sessionQuestionSetId);
+      });
+      
+      console.log(`Filtered to ${filteredRecords.length} records matching subject combination`);
+    }
     
     const total = await AttendanceRecord.countDocuments({ student: studentId });
     const presentCount = await AttendanceRecord.countDocuments({
@@ -112,17 +199,17 @@ exports.getMyAttendanceHistory = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        records,
+        records: filteredRecords,
         pagination: {
-          total,
+          total: filteredRecords.length, // Use filtered count
           limit: parseInt(limit),
           skip: parseInt(skip),
         },
         statistics: {
-          totalClasses: total,
-          present: presentCount,
-          attendancePercentage: total > 0 
-            ? ((presentCount / total) * 100).toFixed(2)
+          totalClasses: filteredRecords.length,
+          present: filteredRecords.filter(r => r.status === 'present').length,
+          attendancePercentage: filteredRecords.length > 0 
+            ? ((filteredRecords.filter(r => r.status === 'present').length / filteredRecords.length) * 100).toFixed(2)
             : 0,
         },
       },
@@ -133,7 +220,6 @@ exports.getMyAttendanceHistory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message,
-      // Send more details in development
       ...(process.env.NODE_ENV === 'development' && {
         error: error.toString(),
         stack: error.stack
@@ -142,7 +228,7 @@ exports.getMyAttendanceHistory = async (req, res) => {
   }
 };
 
-// Get student's weekly schedule
+// Get student's weekly schedule (FILTERED by subject combination)
 exports.getMyWeeklySchedule = async (req, res) => {
   try {
     const student = req.quizTaker;
@@ -161,9 +247,23 @@ exports.getMyWeeklySchedule = async (req, res) => {
       });
     }
     
+    // ✅ FILTER weekly schedule based on student's subject combination
+    let filteredSchedule = schedule.weeklySchedule;
+    
+    if (student.questionSetCombination && student.questionSetCombination.length > 0) {
+      const studentSubjectIds = student.questionSetCombination.map(id => id.toString());
+      
+      filteredSchedule = schedule.weeklySchedule.filter(classSession => {
+        const questionSetId = classSession.questionSet?._id?.toString() || classSession.questionSet?.toString();
+        return studentSubjectIds.includes(questionSetId);
+      });
+      
+      console.log(`Filtered schedule from ${schedule.weeklySchedule.length} to ${filteredSchedule.length} classes`);
+    }
+    
     res.status(200).json({
       success: true,
-      data: schedule.weeklySchedule,
+      data: filteredSchedule,
     });
   } catch (error) {
     console.error('Get weekly schedule error:', error);
