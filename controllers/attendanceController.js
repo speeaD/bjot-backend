@@ -490,12 +490,29 @@ exports.getDepartmentStudentAnalytics = async (req, res) => {
     
     console.log('Getting student analytics for department:', department);
     
-    // Build date filter
-    const dateFilter = {};
+    // Build date filter for sessions
+    const sessionDateFilter = {};
     if (startDate || endDate) {
-      dateFilter.createdAt = {};
-      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
-      if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
+      sessionDateFilter.date = {};
+      if (startDate) sessionDateFilter.date.$gte = new Date(startDate);
+      if (endDate) sessionDateFilter.date.$lte = new Date(endDate);
+    }
+    
+    // ✅ Get total number of classes held in the department (the denominator)
+    const totalClassesHeld = await AttendanceSession.countDocuments({
+      department,
+      ...sessionDateFilter,
+      status: { $in: ['ongoing', 'completed'] }, // Only count classes that actually happened
+    });
+    
+    console.log(`Total classes held in ${department}: ${totalClassesHeld}`);
+    
+    // Build date filter for attendance records
+    const recordDateFilter = {};
+    if (startDate || endDate) {
+      recordDateFilter.createdAt = {};
+      if (startDate) recordDateFilter.createdAt.$gte = new Date(startDate);
+      if (endDate) recordDateFilter.createdAt.$lte = new Date(endDate);
     }
     
     // Get all active students in department
@@ -512,17 +529,17 @@ exports.getDepartmentStudentAnalytics = async (req, res) => {
         const records = await AttendanceRecord.find({
           student: student._id,
           department,
-          ...dateFilter,
+          ...recordDateFilter,
         }).lean();
         
-        const totalClasses = records.length;
         const presentCount = records.filter(r => r.status === 'present').length;
-        const absentCount = records.filter(r => r.status === 'absent').length;
+        const absentCount = totalClassesHeld - presentCount; // ✅ Absent = total classes - present
         const excusedCount = records.filter(r => r.status === 'excused').length;
         const lateCount = records.filter(r => r.isLate && r.status === 'present').length;
         
-        const attendanceRate = totalClasses > 0 
-          ? ((presentCount / totalClasses) * 100).toFixed(2)
+        // ✅ Use totalClassesHeld as the denominator
+        const attendanceRate = totalClassesHeld > 0 
+          ? ((presentCount / totalClassesHeld) * 100).toFixed(2)
           : '0.00';
         
         return {
@@ -530,7 +547,7 @@ exports.getDepartmentStudentAnalytics = async (req, res) => {
           name: student.name,
           email: student.email,
           accountType: student.accountType,
-          totalClasses,
+          totalClasses: totalClassesHeld, // ✅ Same for all students
           present: presentCount,
           absent: absentCount,
           excused: excusedCount,
@@ -546,6 +563,7 @@ exports.getDepartmentStudentAnalytics = async (req, res) => {
     // Calculate department statistics
     const departmentStats = {
       totalStudents: students.length,
+      totalClassesHeld, // ✅ Add this to stats
       averageAttendanceRate: studentAnalytics.length > 0
         ? (studentAnalytics.reduce((sum, s) => sum + s.attendanceRate, 0) / studentAnalytics.length).toFixed(2)
         : '0.00',
