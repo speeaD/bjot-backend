@@ -10,7 +10,7 @@ const QuestionSet = require('../models/QuestionSet');
 exports.createOrUpdateSchedule = async (req, res) => {
   try {
     const { department, weeklySchedule } = req.body;
-    const adminId = req.admin._id; // Assuming auth middleware sets req.admin
+    const adminId = req.admin._id;
     
     // Validate and enrich weeklySchedule with QuestionSet titles
     const enrichedSchedule = [];
@@ -221,6 +221,13 @@ exports.openAttendanceWindow = async (req, res) => {
     const { durationMinutes, bufferMinutes } = req.body;
     const adminId = req.admin._id;
     
+    console.log('Opening attendance window:', {
+      sessionId,
+      adminId,
+      durationMinutes,
+      bufferMinutes
+    });
+    
     const session = await AttendanceSession.findById(sessionId);
     if (!session) {
       return res.status(404).json({
@@ -240,12 +247,15 @@ exports.openAttendanceWindow = async (req, res) => {
     session.openWindow(adminId);
     await session.save();
     
+    console.log('Attendance window opened successfully');
+    
     res.status(200).json({
       success: true,
       message: 'Attendance window opened',
       data: session,
     });
   } catch (error) {
+    console.error('Error opening attendance window:', error);
     res.status(500).json({
       success: false,
       message: error.message,
@@ -259,6 +269,8 @@ exports.closeAttendanceWindow = async (req, res) => {
     const { sessionId } = req.params;
     const adminId = req.admin._id;
     
+    console.log('Closing attendance window:', { sessionId, adminId });
+    
     const session = await AttendanceSession.findById(sessionId);
     if (!session) {
       return res.status(404).json({
@@ -270,12 +282,15 @@ exports.closeAttendanceWindow = async (req, res) => {
     session.closeWindow(adminId);
     await session.save();
     
+    console.log('Attendance window closed successfully');
+    
     res.status(200).json({
       success: true,
       message: 'Attendance window closed',
       data: session,
     });
   } catch (error) {
+    console.error('Error closing attendance window:', error);
     res.status(500).json({
       success: false,
       message: error.message,
@@ -458,6 +473,237 @@ exports.getDepartmentAttendanceSummary = async (req, res) => {
       },
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// ============ STUDENT ANALYTICS ============
+
+// Get department-wide student analytics
+exports.getDepartmentStudentAnalytics = async (req, res) => {
+  try {
+    const { department } = req.params;
+    const { startDate, endDate } = req.query;
+    
+    console.log('Getting student analytics for department:', department);
+    
+    // Build date filter
+    const dateFilter = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
+      if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
+    }
+    
+    // Get all active students in department
+    const students = await QuizTaker.find({
+      department,
+      isActive: true,
+    }).select('name email accountType').lean();
+    
+    console.log(`Found ${students.length} students in ${department}`);
+    
+    // Get attendance records for each student
+    const studentAnalytics = await Promise.all(
+      students.map(async (student) => {
+        const records = await AttendanceRecord.find({
+          student: student._id,
+          department,
+          ...dateFilter,
+        }).lean();
+        
+        const totalClasses = records.length;
+        const presentCount = records.filter(r => r.status === 'present').length;
+        const absentCount = records.filter(r => r.status === 'absent').length;
+        const excusedCount = records.filter(r => r.status === 'excused').length;
+        const lateCount = records.filter(r => r.isLate && r.status === 'present').length;
+        
+        const attendanceRate = totalClasses > 0 
+          ? ((presentCount / totalClasses) * 100).toFixed(2)
+          : '0.00';
+        
+        return {
+          studentId: student._id,
+          name: student.name,
+          email: student.email,
+          accountType: student.accountType,
+          totalClasses,
+          present: presentCount,
+          absent: absentCount,
+          excused: excusedCount,
+          late: lateCount,
+          attendanceRate: parseFloat(attendanceRate),
+        };
+      })
+    );
+    
+    // Sort by attendance rate (lowest first for at-risk students)
+    studentAnalytics.sort((a, b) => a.attendanceRate - b.attendanceRate);
+    
+    // Calculate department statistics
+    const departmentStats = {
+      totalStudents: students.length,
+      averageAttendanceRate: studentAnalytics.length > 0
+        ? (studentAnalytics.reduce((sum, s) => sum + s.attendanceRate, 0) / studentAnalytics.length).toFixed(2)
+        : '0.00',
+      atRiskStudents: studentAnalytics.filter(s => s.attendanceRate < 75).length,
+      perfectAttendance: studentAnalytics.filter(s => s.attendanceRate === 100).length,
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        department,
+        statistics: departmentStats,
+        students: studentAnalytics,
+        dateRange: {
+          startDate: startDate || null,
+          endDate: endDate || null,
+        },
+      },
+    });
+    
+  } catch (error) {
+    console.error('Get department student analytics error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// Get individual student detailed analytics
+exports.getStudentDetailedAnalytics = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { startDate, endDate } = req.query;
+    
+    console.log('Getting detailed analytics for student:', studentId);
+    
+    // Get student info
+    const student = await QuizTaker.findById(studentId)
+      .select('name email department accountType')
+      .populate('questionSetCombination', 'title');
+    
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found',
+      });
+    }
+    
+    // Build date filter
+    const dateFilter = {};
+    if (startDate || endDate) {
+      dateFilter.createdAt = {};
+      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
+      if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
+    }
+    
+    // Get all attendance records
+    const records = await AttendanceRecord.find({
+      student: studentId,
+      ...dateFilter,
+    })
+    .populate({
+      path: 'session',
+      select: 'questionSetTitle date scheduledStartTime scheduledEndTime',
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+    
+    console.log(`Found ${records.length} attendance records`);
+    
+    // Calculate statistics
+    const totalClasses = records.length;
+    const presentCount = records.filter(r => r.status === 'present').length;
+    const absentCount = records.filter(r => r.status === 'absent').length;
+    const excusedCount = records.filter(r => r.status === 'excused').length;
+    const lateCount = records.filter(r => r.isLate && r.status === 'present').length;
+    const onTimeCount = presentCount - lateCount;
+    
+    const attendanceRate = totalClasses > 0 
+      ? ((presentCount / totalClasses) * 100).toFixed(2)
+      : '0.00';
+    
+    const punctualityRate = presentCount > 0
+      ? ((onTimeCount / presentCount) * 100).toFixed(2)
+      : '0.00';
+    
+    // Group by subject
+    const subjectBreakdown = {};
+    records.forEach(record => {
+      if (!record.session) return;
+      
+      const subject = record.session.questionSetTitle;
+      if (!subjectBreakdown[subject]) {
+        subjectBreakdown[subject] = {
+          subject,
+          total: 0,
+          present: 0,
+          absent: 0,
+          late: 0,
+        };
+      }
+      
+      subjectBreakdown[subject].total++;
+      if (record.status === 'present') {
+        subjectBreakdown[subject].present++;
+        if (record.isLate) subjectBreakdown[subject].late++;
+      } else if (record.status === 'absent') {
+        subjectBreakdown[subject].absent++;
+      }
+    });
+    
+    // Convert to array and calculate rates
+    const subjectStats = Object.values(subjectBreakdown).map((stat) => ({
+      ...stat,
+      attendanceRate: stat.total > 0 
+        ? ((stat.present / stat.total) * 100).toFixed(2)
+        : '0.00',
+    }));
+    
+    // Get recent attendance pattern (last 10 classes)
+    const recentPattern = records.slice(0, 10).map(r => ({
+      date: r.session?.date,
+      subject: r.session?.questionSetTitle,
+      status: r.status,
+      isLate: r.isLate,
+      markedAt: r.markedAt,
+    }));
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        student: {
+          id: student._id,
+          name: student.name,
+          email: student.email,
+          department: student.department,
+          accountType: student.accountType,
+          subjects: student.questionSetCombination,
+        },
+        overallStats: {
+          totalClasses,
+          present: presentCount,
+          absent: absentCount,
+          excused: excusedCount,
+          late: lateCount,
+          onTime: onTimeCount,
+          attendanceRate: parseFloat(attendanceRate),
+          punctualityRate: parseFloat(punctualityRate),
+        },
+        subjectBreakdown: subjectStats,
+        recentPattern,
+        records: records.slice(0, 20), // Last 20 records
+      },
+    });
+    
+  } catch (error) {
+    console.error('Get student detailed analytics error:', error);
     res.status(500).json({
       success: false,
       message: error.message,

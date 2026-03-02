@@ -26,6 +26,15 @@ router.post('/admin/sessions/:sessionId/students/:studentId/mark', verifyAdmin, 
 router.get('/admin/students/:studentId/attendance-report', verifyAdmin, attendanceController.getStudentAttendanceReport);
 router.get('/admin/departments/:department/summary', verifyAdmin, attendanceController.getDepartmentAttendanceSummary);
 
+// ============ STUDENT ANALYTICS ROUTES (NEW) ============
+
+// Department-wide student analytics
+router.get('/admin/analytics/department/:department', verifyAdmin, attendanceController.getDepartmentStudentAnalytics);
+
+// Individual student detailed analytics
+router.get('/admin/analytics/student/:studentId', verifyAdmin, attendanceController.getStudentDetailedAnalytics);
+
+
 // ============ STUDENT ROUTES ============
 
 router.get('/student/classes/today', verifyQuizTaker, studentAttendanceController.getTodaysClasses);
