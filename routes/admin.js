@@ -789,14 +789,14 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
         const assignedQuiz = quizTaker.assignedQuizzes[assignedQuizIndex];
 
         // Check if quiz is completed
-        if (assignedQuiz.status === "completed") {
-          results.failed.push({
-            quizTakerId: takerId,
-            email: quizTaker.email,
-            reason: "Cannot unassign completed quiz",
-          });
-          continue;
-        }
+        // if (assignedQuiz.status === "completed") {
+        //   results.failed.push({
+        //     quizTakerId: takerId,
+        //     email: quizTaker.email,
+        //     reason: "Cannot unassign completed quiz",
+        //   });
+        //   continue;
+        // }
 
         // Remove quiz assignment
         quizTaker.assignedQuizzes.splice(assignedQuizIndex, 1);
