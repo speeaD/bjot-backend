@@ -10,16 +10,13 @@ const app = express();
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
       'text/csv',
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     ];
-    
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -28,35 +25,41 @@ const upload = multer({
   }
 });
 
-
-// Make upload middleware available globally
 app.set('upload', upload);
-
-// Middleware 
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('MongoDB connected successfully'))
-.catch((err) => console.error('MongoDB connection error:', err));
+// Routes (will be registered after DB connects)
+const startServer = async () => {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('MongoDB connected successfully');
 
-// Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/admin', require('./routes/admin'));
-app.use('/api/quiztaker', require('./routes/quiztaker'));
-app.use('/api/quiz', require('./routes/quiz'));
-app.use('/api/questionset', require('./routes/questionset'));
-// NEW: Public routes for regular students (no authentication required)
-app.use('/api/public/quiz', require('./routes/public.js'));
-app.use('/api/cbt', require('./routes/cbt.js'));
-app.use('/api/games/scholarswager', require('./routes/scholarswager.js'));
-app.use('/api/attendance', require('./routes/attendance.js'))
+    // Register routes after DB connection
+    app.use('/api/auth', require('./routes/auth'));
+    app.use('/api/admin', require('./routes/admin'));
+    app.use('/api/quiztaker', require('./routes/quiztaker'));
+    app.use('/api/quiz', require('./routes/quiz'));
+    app.use('/api/questionset', require('./routes/questionset'));
+    app.use('/api/public/quiz', require('./routes/public.js'));
+    app.use('/api/cbt', require('./routes/cbt.js'));
+    app.use('/api/games/scholarswager', require('./routes/scholarswager.js'));
+    app.use('/api/attendance', require('./routes/attendance.js'));
 
-// Test route to verify server is working
-app.get('/', (req, res) => {
-  res.json({ message: 'Server is running!' });
-});
+    app.get('/', (req, res) => {
+      res.json({ message: 'Server is running!' });
+    });
+
+    const PORT = process.env.PORT || 5001;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -66,7 +69,4 @@ app.use((err, req, res, next) => {
     message: 'Something went wrong!', 
     error: err.message 
   });
-});
-
-const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+});   
