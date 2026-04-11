@@ -502,7 +502,11 @@ router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
     const { quizTakerIds } = req.body;
 
     // Validation
-    if (!quizTakerIds || !Array.isArray(quizTakerIds) || quizTakerIds.length === 0) {
+    if (
+      !quizTakerIds ||
+      !Array.isArray(quizTakerIds) ||
+      quizTakerIds.length === 0
+    ) {
       return res.status(400).json({
         success: false,
         message: "Please provide quizTakerIds array",
@@ -513,8 +517,6 @@ router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
       success: [],
       failed: [],
     };
-
-    
 
     for (const takerId of quizTakerIds) {
       try {
@@ -592,7 +594,8 @@ router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
     if (hasSubmissions) {
       return res.status(400).json({
         success: false,
-        message: "Cannot delete quiz taker with existing submissions. Please delete submissions first or contact support.",
+        message:
+          "Cannot delete quiz taker with existing submissions. Please delete submissions first or contact support.",
       });
     }
 
@@ -659,19 +662,38 @@ router.post("/assign-quiz", verifyAdmin, async (req, res) => {
         }
 
         // Validate question set combination match
-        const quizCombo = quiz.questionSetCombination
-          .map((id) => id.toString())
-          .sort();
-        const takerCombo = quizTaker.questionSetCombination
-          .map((id) => id.toString())
-          .sort();
+        const examType = quiz.settings.examType || "multi-subject";
+        const quizCombo = quiz.questionSetCombination.map((id) =>
+          id.toString(),
+        );
+        const takerCombo = quizTaker.questionSetCombination.map((id) =>
+          id.toString(),
+        );
 
-        if (JSON.stringify(quizCombo) !== JSON.stringify(takerCombo)) {
-          results.failed.push({
-            takerId,
-            reason: "Question set combination does not match quiz requirements",
-          });
-          continue;
+        if (examType === "single-subject") {
+          // Student must offer the one subject the quiz covers
+          const quizSubjectId = quizCombo[0];
+          if (!takerCombo.includes(quizSubjectId)) {
+            results.failed.push({
+              takerId,
+              reason:
+                "Student does not offer the subject required for this single-subject exam",
+            });
+            continue;
+          }
+        } else {
+          // Multi-subject: exact combination match (existing behaviour)
+          if (
+            JSON.stringify([...quizCombo].sort()) !==
+            JSON.stringify([...takerCombo].sort())
+          ) {
+            results.failed.push({
+              takerId,
+              reason:
+                "Question set combination does not match quiz requirements",
+            });
+            continue;
+          }
         }
 
         // Initialize assignedQuizzes if it doesn't exist
@@ -755,9 +777,9 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
         const quizTaker = await QuizTaker.findById(takerId);
 
         if (!quizTaker) {
-          results.failed.push({ 
-            quizTakerId: takerId, 
-            reason: "Quiz taker not found" 
+          results.failed.push({
+            quizTakerId: takerId,
+            reason: "Quiz taker not found",
           });
           continue;
         }
@@ -774,7 +796,7 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
 
         // Check if quiz is assigned
         const assignedQuizIndex = quizTaker.assignedQuizzes.findIndex(
-          (aq) => aq.quizId.toString() === quizId
+          (aq) => aq.quizId.toString() === quizId,
         );
 
         if (assignedQuizIndex === -1) {
@@ -802,15 +824,15 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
         quizTaker.assignedQuizzes.splice(assignedQuizIndex, 1);
 
         await quizTaker.save();
-        
-        results.success.push({ 
-          quizTakerId: takerId, 
-          email: quizTaker.email 
+
+        results.success.push({
+          quizTakerId: takerId,
+          email: quizTaker.email,
         });
       } catch (error) {
-        results.failed.push({ 
-          quizTakerId: takerId, 
-          reason: error.message 
+        results.failed.push({
+          quizTakerId: takerId,
+          reason: error.message,
         });
       }
     }

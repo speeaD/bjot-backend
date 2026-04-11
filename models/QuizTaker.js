@@ -187,13 +187,17 @@ const QuizTakerSchema = new mongoose.Schema({
     selectedQuestionSetOrder: {
       type: [Number],
       validate: {
-        validator: function(arr) {
-          if (!arr || arr.length === 0) return true;
-          if (arr.length !== 4) return false;
-          const sorted = [...arr].sort();
-          return sorted.join(',') === '1,2,3,4';
-        },
-        message: 'selectedQuestionSetOrder must contain [1,2,3,4] in any order'
+        validator: function (arr) {
+      if (!arr || arr.length === 0) return true;
+      // Allow [1] for single-subject or a permutation of [1,2,3,4] for multi-subject
+      if (arr.length === 1) return arr[0] === 1;
+      if (arr.length === 4) {
+        const sorted = [...arr].sort();
+        return sorted.join(',') === '1,2,3,4';
+      }
+      return false;
+    },
+    message: 'selectedQuestionSetOrder must be [1] or a permutation of [1,2,3,4]',
       }
     },
     currentQuestionSetOrder: {
@@ -227,22 +231,20 @@ QuizTakerSchema.statics.generateAccessCode = function() {
 };
 
 // Helper method to initialize question set progress
-QuizTakerSchema.methods.initializeQuestionSetProgress = function(quizId) {
+QuizTakerSchema.methods.initializeQuestionSetProgress = function (quizId, setCount = 4) {
   const assignedQuiz = this.assignedQuizzes.find(
     aq => aq.quizId.toString() === quizId.toString()
   );
-  
+
   if (!assignedQuiz) return false;
-  
+
   if (!assignedQuiz.questionSetProgress || assignedQuiz.questionSetProgress.length === 0) {
-    assignedQuiz.questionSetProgress = [
-      { questionSetOrder: 1, status: 'not-started' },
-      { questionSetOrder: 2, status: 'not-started' },
-      { questionSetOrder: 3, status: 'not-started' },
-      { questionSetOrder: 4, status: 'not-started' },
-    ];
+    assignedQuiz.questionSetProgress = Array.from({ length: setCount }, (_, i) => ({
+      questionSetOrder: i + 1,
+      status: 'not-started',
+    }));
   }
-  
+
   return true;
 };
 

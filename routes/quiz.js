@@ -9,7 +9,6 @@ const QuestionSet = require('../models/QuestionSet');
 // @access  Private (Admin only)
 router.post('/', verifyAdmin, async (req, res) => {
   try {
-    // Destructure the entire body to get settings at root level
     const { questionSetCombination, batchConfiguration, settings } = req.body;
 
     // Validation
@@ -20,16 +19,19 @@ router.post('/', verifyAdmin, async (req, res) => {
       });
     }
 
-    if (!questionSetCombination || !Array.isArray(questionSetCombination) || questionSetCombination.length !== 4) {
+    const examType = settings.examType || 'multi-subject';
+    const expectedCount = examType === 'single-subject' ? 1 : 4;
+
+    if (!questionSetCombination || !Array.isArray(questionSetCombination) || questionSetCombination.length !== expectedCount) {
       return res.status(400).json({
         success: false,
-        message: 'Exactly 4 question set IDs are required',
+        message: `Exactly ${expectedCount} question set IDs are required`,
       });
     }
 
     // Check for duplicates
     const uniqueSetIds = new Set(questionSetCombination);
-    if (uniqueSetIds.size !== 4) {
+    if (uniqueSetIds.size !== expectedCount) {
       return res.status(400).json({
         success: false,
         message: 'Cannot use the same question set multiple times',
@@ -38,10 +40,10 @@ router.post('/', verifyAdmin, async (req, res) => {
 
     // Validate batchConfiguration if provided
     if (batchConfiguration) {
-      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== 4) {
+      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== expectedCount) {
         return res.status(400).json({
           success: false,
-          message: 'Batch configuration must have exactly 4 entries (one per question set)',
+          message: `Batch configuration must have exactly ${expectedCount} entries (one per question set)`,
         });
       }
     }
@@ -140,6 +142,7 @@ router.post('/', verifyAdmin, async (req, res) => {
       settings: {
         coverImage: settings.coverImage || '',
         title: settings.title,
+        examType: settings.examType || 'multi-subject',
         isQuizChallenge: settings.isQuizChallenge || false,
         isOpenQuiz: settings.isOpenQuiz || false,
         description: settings.description || '',
@@ -438,10 +441,13 @@ router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
   try {
     const { questionSetIds, batchConfiguration } = req.body;
 
-    if (!questionSetIds || !Array.isArray(questionSetIds) || questionSetIds.length !== 4) {
+    const examType = settings.examType || 'multi-subject';
+    const expectedCount = examType === 'single-subject' ? 1 : 4;
+
+    if (!questionSetIds || !Array.isArray(questionSetIds) || questionSetIds.length !== expectedCount) {
       return res.status(400).json({
         success: false,
-        message: 'Exactly 4 question set IDs are required',
+        message: `Exactly ${expectedCount} question set IDs are required`,
       });
     }
 
@@ -456,10 +462,10 @@ router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
 
     // Validate batchConfiguration if provided
     if (batchConfiguration) {
-      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== 4) {
+      if (!Array.isArray(batchConfiguration) || batchConfiguration.length !== expectedCount) {
         return res.status(400).json({
           success: false,
-          message: 'Batch configuration must have exactly 4 entries (one per question set)',
+          message: `Batch configuration must have exactly ${expectedCount} entries (one per question set)`,
         });
       }
     }
@@ -470,10 +476,10 @@ router.put('/:id/question-sets', verifyAdmin, async (req, res) => {
       isActive: true,
     });
 
-    if (questionSets.length !== 4) {
+    if (questionSets.length !== expectedCount) {
       return res.status(400).json({
         success: false,
-        message: 'One or more question sets not found or inactive',
+        message: `One or more question sets not found or inactive`,
       });
     }
 

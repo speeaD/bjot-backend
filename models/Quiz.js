@@ -12,20 +12,19 @@ const QuizQuestionSchema = new mongoose.Schema(
       required: true,
     },
     passage: {
-    type: String,
-    default: '',
-    trim: true,
-  },
-  // NEW: Optional diagram/image reference
-  diagram: {
-    type: String,           // URL to image (e.g. Cloudinary, S3, or your own storage)
-    default: null,
-  },
-  diagramAlt: {             // Optional accessibility text
-    type: String,
-    default: '',
-    trim: true,
-  },
+      type: String,
+      default: "",
+      trim: true,
+    },
+    diagram: {
+      type: String, // URL to image (e.g. Cloudinary, S3, or your own storage)
+      default: null,
+    },
+    diagramAlt: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     options: [
       {
         type: String,
@@ -80,7 +79,6 @@ const QuizQuestionSetSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 1,
-      max: 4,
     },
   },
   { _id: true },
@@ -88,6 +86,11 @@ const QuizQuestionSetSchema = new mongoose.Schema(
 
 const QuizSchema = new mongoose.Schema({
   settings: {
+    examType: {
+      type: String,
+      enum: ["multi-subject", "single-subject"],
+      default: "multi-subject",
+    },
     coverImage: {
       type: String,
       default: "",
@@ -158,21 +161,22 @@ const QuizSchema = new mongoose.Schema({
     type: [QuizQuestionSetSchema],
     validate: {
       validator: function (v) {
-        return v.length === 4;
-      },
-      message: "A quiz must have exactly 4 question sets",
+      if (this.settings?.examType === 'single-subject') return v.length === 1;
+      return v.length === 4;
+    },
+    message: 'A multi-subject quiz must have 4 question sets; a single-subject quiz must have 1',
     },
   },
 
-  // Track the question set combination (unchanged - just the base question set IDs)
   questionSetCombination: {
     type: [mongoose.Schema.Types.ObjectId],
     ref: "QuestionSet",
     validate: {
-      validator: function (v) {
-        return v.length === 4;
-      },
-      message: "Question set combination must contain exactly 4 question sets",
+     validator: function (v) {
+      if (this.settings?.examType === 'single-subject') return v.length === 1;
+      return v.length === 4;
+    },
+    message: 'Question set combination must contain 1 (single-subject) or 4 (multi-subject) question sets',
     },
   },
 
