@@ -54,7 +54,7 @@ router.post('/', verifyAdmin, async (req, res) => {
       isActive: true,
     });
 
-    if (questionSets.length !== 4) {
+    if (questionSets.length !== expectedCount) {
       return res.status(400).json({
         success: false,
         message: 'One or more question sets not found or inactive',
