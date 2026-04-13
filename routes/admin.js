@@ -346,7 +346,7 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
     });
 
     await quizTaker.save();
-    await sendAccessCodeEmail(email, name, accessCode);
+    sendAccessCodeEmail(email, name, accessCode);
 
     res.status(201).json({
       success: true,
@@ -377,7 +377,7 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.get("/quiztakers", verifyAdmin, async (req, res) => {
   try {
-    const { accountType } = req.query;
+    const { accountType, page = 1, limit = 100 } = req.query;
 
     const filter = {};
     if (accountType && ["premium", "regular"].includes(accountType)) {
@@ -385,21 +385,24 @@ router.get("/quiztakers", verifyAdmin, async (req, res) => {
     }
 
     const quizTakers = await QuizTaker.find(filter)
-      .populate("assignedQuizzes.quizId", "settings.title")
+      .populate("assignedQuizzes.quizId", "settings.title settings.examType")
       .populate("questionSetCombination", "title")
-      .sort({ createdAt: -1 });
+      .select("-__v")
+      .sort({ createdAt: -1 })
+      .limit(Number(limit))
+      .skip((Number(page) - 1) * Number(limit))
+      .lean(); // ← single biggest win, skips Mongoose document hydration
+
+    const total = await QuizTaker.countDocuments(filter);
 
     res.json({
       success: true,
       count: quizTakers.length,
+      total,
       quizTakers,
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 });
 
@@ -857,31 +860,38 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
 router.get("/submissions", verifyAdmin, async (req, res) => {
   try {
     const QuizSubmission = require("../models/QuizSubmission");
-    const { accountType } = req.query;
+    const { accountType, page = 1, limit = 100 } = req.query;
 
-    let submissions = await QuizSubmission.find()
+    // Build the query — if accountType filter needed, get matching IDs first
+    let quizTakerFilter = {};
+    if (accountType && ["premium", "regular"].includes(accountType)) {
+      const matchingTakers = await QuizTaker.find(
+        { accountType },
+        "_id"
+      ).lean();
+      quizTakerFilter = {
+        quizTakerId: { $in: matchingTakers.map(t => t._id) }
+      };
+    }
+
+    const submissions = await QuizSubmission.find(quizTakerFilter)
       .populate("quizId", "settings.title settings.isOpenQuiz")
       .populate("quizTakerId", "email name accountType accessCode")
-      .sort({ submittedAt: -1 });
+      .sort({ submittedAt: -1 })
+      .limit(Number(limit))
+      .skip((Number(page) - 1) * Number(limit))
+      .lean();
 
-    // Filter by account type if specified
-    if (accountType && ["premium", "regular"].includes(accountType)) {
-      submissions = submissions.filter(
-        (sub) => sub.quizTakerId && sub.quizTakerId.accountType === accountType,
-      );
-    }
+    const total = await QuizSubmission.countDocuments(quizTakerFilter);
 
     res.json({
       success: true,
       count: submissions.length,
+      total,
       submissions,
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 });
 
