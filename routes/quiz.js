@@ -338,30 +338,21 @@ router.post('/', verifyAdmin, async (req, res) => {
 // @route   GET /api/quiz
 // @desc    Get all quizzes
 // @access  Private (Admin only)
+// In quiz.js route — GET /
 router.get('/', verifyAdmin, async (req, res) => {
   try {
-    const { isActive, isQuizChallenge } = req.query;
-
-    const filter = {};
-    if (isActive !== undefined) filter.isActive = isActive === 'true';
-    if (isQuizChallenge !== undefined) filter['settings.isQuizChallenge'] = isQuizChallenge === 'true';
-
-    const quizzes = await Quiz.find(filter)
+    const quizzes = await Quiz.find({ isActive: true })
+      .select(
+        'settings.title settings.description settings.duration settings.isOpenQuiz settings.isQuizChallenge settings.examType totalPoints createdAt updatedAt isActive createdBy'
+        // deliberately excludes: questionSets (the massive field)
+      )
       .populate('createdBy', 'email')
-      .populate('questionSets.questionSetId', 'title')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json({
-      success: true,
-      count: quizzes.length,
-      quizzes,
-    });
+    res.json({ success: true, count: quizzes.length, quizzes });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: error.message,
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 
