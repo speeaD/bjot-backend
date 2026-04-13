@@ -346,7 +346,7 @@ router.get('/', verifyAdmin, async (req, res) => {
       'settings.title settings.description settings.duration settings.isOpenQuiz settings.isQuizChallenge settings.examType totalPoints createdAt updatedAt isActive createdBy'
         // deliberately excludes: questionSets (the massive field)
       )
-      .select('questionSetCombination')
+      .populate('questionSetCombination')
       .populate('createdBy', 'email')
       .sort({ createdAt: -1 })
       .lean();
