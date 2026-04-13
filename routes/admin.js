@@ -375,25 +375,114 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
 // @route   GET /api/admin/quiztakers
 // @desc    Get all quiz takers (with filter for account type)
 // @access  Private (Admin only)
+// router.get("/quiztakers", verifyAdmin, async (req, res) => {
+//   try {
+//     const { accountType, page = 1, limit = 100 } = req.query;
+
+//     const filter = {};
+//     if (accountType && ["premium", "regular"].includes(accountType)) {
+//       filter.accountType = accountType;
+//     }
+
+//     const quizTakers = await QuizTaker.find(filter)
+//       .populate("assignedQuizzes.quizId", "settings.title settings.examType")
+//       .populate("questionSetCombination", "title")
+//       .select("-__v")
+//       .sort({ createdAt: -1 })
+//       .limit(Number(limit))
+//       .skip((Number(page) - 1) * Number(limit))
+//       .lean(); // ← single biggest win, skips Mongoose document hydration
+
+//     const total = await QuizTaker.countDocuments(filter);
+
+//     res.json({
+//       success: true,
+//       count: quizTakers.length,
+//       total,
+//       quizTakers,
+//     });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: "Server error", error: error.message });
+//   }
+// });
+
 router.get("/quiztakers", verifyAdmin, async (req, res) => {
   try {
-    const { accountType, page = 1, limit = 100 } = req.query;
+    const { accountType, page = 1, limit = 20 } = req.query;
 
     const filter = {};
     if (accountType && ["premium", "regular"].includes(accountType)) {
       filter.accountType = accountType;
     }
 
-    const quizTakers = await QuizTaker.find(filter)
-      .populate("assignedQuizzes.quizId", "settings.title settings.examType")
-      .populate("questionSetCombination", "title")
-      .select("-__v")
-      .sort({ createdAt: -1 })
-      .limit(Number(limit))
-      .skip((Number(page) - 1) * Number(limit))
-      .lean(); // ← single biggest win, skips Mongoose document hydration
+    // Run fetch and count in parallel
+    const [quizTakers, total] = await Promise.all([
+      QuizTaker.aggregate([
+        { $match: filter },
+        { $sort: { createdAt: -1 } },
+        { $skip: (Number(page) - 1) * Number(limit) },
+        { $limit: Number(limit) },
 
-    const total = await QuizTaker.countDocuments(filter);
+        // Populate questionSetCombination (just titles)
+        {
+          $lookup: {
+            from: "questionsets",
+            localField: "questionSetCombination",
+            foreignField: "_id",
+            as: "questionSetCombination",
+            pipeline: [{ $project: { title: 1 } }],
+          },
+        },
+
+        // Populate assignedQuizzes.quizId (just title + examType)
+        {
+          $lookup: {
+            from: "quizzes",
+            localField: "assignedQuizzes.quizId",
+            foreignField: "_id",
+            as: "_quizLookup",
+            pipeline: [
+              { $project: { "settings.title": 1, "settings.examType": 1 } },
+            ],
+          },
+        },
+
+        // Merge quiz data back into assignedQuizzes array
+        {
+          $addFields: {
+            assignedQuizzes: {
+              $map: {
+                input: "$assignedQuizzes",
+                as: "aq",
+                in: {
+                  $mergeObjects: [
+                    "$$aq",
+                    {
+                      quizId: {
+                        $arrayElemAt: [
+                          {
+                            $filter: {
+                              input: "$_quizLookup",
+                              as: "q",
+                              cond: { $eq: ["$$q._id", "$$aq.quizId"] },
+                            },
+                          },
+                          0,
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+
+        { $project: { _quizLookup: 0, __v: 0 } },
+      ]),
+
+      QuizTaker.countDocuments(filter),
+    ]);
 
     res.json({
       success: true,
