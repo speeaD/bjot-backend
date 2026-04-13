@@ -45,6 +45,7 @@ const startServer = async () => {
     app.use('/api/cbt', require('./routes/cbt.js'));
     app.use('/api/games/scholarswager', require('./routes/scholarswager.js'));
     app.use('/api/attendance', require('./routes/attendance.js'));
+    app.use('/api/health', require('./routes/health.js'));
 
     app.get('/', (req, res) => {
       res.json({ message: 'Server is running!' });
