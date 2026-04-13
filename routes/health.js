@@ -1,4 +1,4 @@
-const express = require("express");
+const express = require('express');
 const mongoose = require("mongoose");
 const router = express.Router();
 
@@ -14,3 +14,5 @@ router.get('/', async (req, res) => {
     // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
   });
 });
+
+module.exports = router;
