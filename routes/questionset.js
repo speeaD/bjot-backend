@@ -641,7 +641,8 @@ router.get("/", async (req, res) => {
     }
 
     const questionSets = await QuestionSet.find(filter)
-      .populate("createdBy", "email")
+      .select("title isActive usesBatches createdAt totalPoints")
+      .lean()
       .sort({ createdAt: -1 });
 
     res.json({
