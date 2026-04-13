@@ -343,7 +343,7 @@ router.get('/', verifyAdmin, async (req, res) => {
   try {
     const quizzes = await Quiz.find({ isActive: true })
       .select(
-       'questionSetCombination', 'settings.title settings.description settings.duration settings.isOpenQuiz settings.isQuizChallenge settings.examType totalPoints createdAt updatedAt isActive createdBy'
+      'questionSetCombination, settings.title settings.description settings.duration settings.isOpenQuiz settings.isQuizChallenge settings.examType totalPoints createdAt updatedAt isActive createdBy'
         // deliberately excludes: questionSets (the massive field)
       )
       .populate('createdBy', 'email')
