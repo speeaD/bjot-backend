@@ -2,7 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const router = express.Router();
 
-router.get('/health', async (req, res) => {
+router.get('/', async (req, res) => {
   const start = Date.now();
   await mongoose.connection.db.admin().ping();
   const duration = Date.now() - start;
