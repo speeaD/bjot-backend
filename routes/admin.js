@@ -949,7 +949,7 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
 router.get("/submissions", verifyAdmin, async (req, res) => {
   try {
     const QuizSubmission = require("../models/QuizSubmission");
-    const { accountType, page = 1, limit = 100 } = req.query;
+    const { accountType, page = 1, limit = 1000 } = req.query;
 
     // Build the query — if accountType filter needed, get matching IDs first
     let quizTakerFilter = {};
