@@ -3,9 +3,6 @@ const router = express.Router();
 const { verifyQuizTaker } = require('../middleware/auth'); // Your auth middleware
 const GameSession = require('../models/GameSession');
 const QuestionSet = require('../models/QuestionSet');
-
-const QuestionSet = require('../models/QuestionSet');
-
 // Helper to get all active multiple-choice questions, supporting both legacy and batches
 const getAllMCQuestions = (questionSet) => {
   if (questionSet.usesBatches && questionSet.batches && questionSet.batches.length > 0) {
