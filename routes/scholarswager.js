@@ -4,24 +4,38 @@ const { verifyQuizTaker } = require('../middleware/auth'); // Your auth middlewa
 const GameSession = require('../models/GameSession');
 const QuestionSet = require('../models/QuestionSet');
 
+const QuestionSet = require('../models/QuestionSet');
+
+// Helper to get all active multiple-choice questions, supporting both legacy and batches
+const getAllMCQuestions = (questionSet) => {
+  if (questionSet.usesBatches && questionSet.batches && questionSet.batches.length > 0) {
+    return questionSet.batches
+      .filter(batch => batch.isActive)
+      .flatMap(batch => batch.questions || [])
+      .filter(q => q.type === 'multiple-choice');
+  } 
+  // Legacy support
+  return (questionSet.questions || []).filter(q => q.type === 'multiple-choice');
+};
+
 
 // @route   GET /api/scholarswager/subjects
 // @desc    Get all available subjects (question sets)
 // @access  Private
-router.get('/subjects', async (req, res) => {
+router.get('/subjects', verifyQuizTaker, async (req, res) => {
   try {
-    const questionSets = await QuestionSet.find({ 
+    const questionSets = await QuestionSet.find({
       isActive: true,
-      questionCount: { $gt: 0 }
+      questionCount: { $gt: 0 },
     })
-    .select('title questionCount')
-    .sort({ title: 1 });
+      .select('title questionCount totalPoints')
+      .sort({ title: 1 });
 
-    // Map to subject format for frontend
     const subjects = questionSets.map(qs => ({
       id: qs._id,
       name: qs.title,
-      questionCount: qs.questionCount
+      questionCount: qs.questionCount,
+      totalPoints: qs.totalPoints,
     }));
 
     res.json({
@@ -29,6 +43,7 @@ router.get('/subjects', async (req, res) => {
       subjects,
     });
   } catch (error) {
+    console.error('Error fetching subjects:', error);
     res.status(500).json({
       success: false,
       message: 'Server error',
@@ -40,7 +55,7 @@ router.get('/subjects', async (req, res) => {
 // @route   POST /api/scholars-wager/start
 // @desc    Start a new game session
 // @access  Private
-router.post('/start', async (req, res) => {
+router.post('/start', verifyQuizTaker, async (req, res) => {
   try {
     const { questionSetId, userId } = req.body;
 
@@ -64,7 +79,7 @@ router.post('/start', async (req, res) => {
     }
 
     // Filter only multiple-choice questions for Scholar's Wager
-    const mcQuestions = questionSet.questions.filter(q => q.type === 'multiple-choice');
+    const mcQuestions = getAllMCQuestions(questionSet);
 
     if (mcQuestions.length === 0) {
       return res.status(400).json({
@@ -150,8 +165,8 @@ router.get('/session/:sessionId/question', async (req, res) => {
     }
 
     // Get only multiple-choice questions that haven't been used
-    const availableQuestions = questionSet.questions.filter(q => 
-      q.type === 'multiple-choice' && 
+    const allMCQuestions = getAllMCQuestions(questionSet);
+    const availableQuestions = allMCQuestions.filter(q => 
       !gameSession.usedQuestionIds.includes(q._id)
     );
 
@@ -244,8 +259,19 @@ router.post('/session/:sessionId/answer', async (req, res) => {
     }
 
     const questionSet = await QuestionSet.findById(gameSession.questionSetId);
-    const question = questionSet.questions.id(questionId);
-
+    
+    // Find question supporting batches
+    let question = null;
+    if (questionSet.usesBatches) {
+      for (const batch of questionSet.batches) {
+        if (batch.isActive) {
+          question = batch.questions.id(questionId);
+          if (question) break;
+        }
+      }
+    } else {
+      question = questionSet.questions.id(questionId);
+    }
     if (!question) {
       return res.status(404).json({
         success: false,
