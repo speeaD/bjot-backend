@@ -24,7 +24,7 @@ const GameHistorySchema = new mongoose.Schema({
 const GameSessionSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // or 'Student' based on your user model
+    ref: 'QuizTaker', // or 'Student' based on your user model
     required: true,
   },
   gameType: {
