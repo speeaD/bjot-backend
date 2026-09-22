@@ -1,62 +1,99 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const QuizQuestionSchema = new mongoose.Schema({
-  type: {
-    type: String,
-    enum: ['multiple-choice', 'essay', 'true-false', 'fill-in-the-blanks'],
-    required: true,
+const QuizQuestionSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ["multiple-choice", "essay", "true-false", "fill-in-the-blanks"],
+      required: true,
+    },
+    question: {
+      type: String,
+      required: true,
+    },
+    passage: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    diagram: {
+      type: String, // URL to image (e.g. Cloudinary, S3, or your own storage)
+      default: null,
+    },
+    diagramAlt: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    options: [
+      {
+        type: String,
+      },
+    ],
+    correctAnswer: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+    points: {
+      type: Number,
+      default: 1,
+    },
+    order: {
+      type: Number,
+      required: true,
+    },
+    originalQuestionId: {
+      type: mongoose.Schema.Types.ObjectId,
+    },
   },
-  question: {
-    type: String,
-    required: true,
-  },
-  options: [{
-    type: String,
-  }],
-  correctAnswer: {
-    type: mongoose.Schema.Types.Mixed,
-  },
-  points: {
-    type: Number,
-    default: 1,
-  },
-  order: {
-    type: Number,
-    required: true,
-  },
-  originalQuestionId: {
-    type: mongoose.Schema.Types.ObjectId,
-  }
-}, { _id: true });
+  { _id: true },
+);
 
-const QuizQuestionSetSchema = new mongoose.Schema({
-  questionSetId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'QuestionSet',
-    required: true,
+const QuizQuestionSetSchema = new mongoose.Schema(
+  {
+    questionSetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "QuestionSet",
+      required: true,
+    },
+    // NEW: Batch information
+    batchNumber: {
+      type: Number,
+      min: 1,
+    },
+    batchId: {
+      type: mongoose.Schema.Types.ObjectId,
+    },
+    batchName: {
+      type: String,
+    },
+    title: {
+      type: String,
+      required: true,
+    },
+    questions: [QuizQuestionSchema],
+    totalPoints: {
+      type: Number,
+      default: 0,
+    },
+    order: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
   },
-  title: {
-    type: String,
-    required: true,
-  },
-  questions: [QuizQuestionSchema],
-  totalPoints: {
-    type: Number,
-    default: 0,
-  },
-  order: {
-    type: Number,
-    required: true,
-    min: 1,
-    max: 4,
-  }
-}, { _id: true });
+  { _id: true },
+);
 
 const QuizSchema = new mongoose.Schema({
   settings: {
+    examType: {
+      type: String,
+      enum: ["multi-subject", "single-subject"],
+      default: "multi-subject",
+    },
     coverImage: {
       type: String,
-      default: '',
+      default: "",
     },
     title: {
       type: String,
@@ -67,18 +104,17 @@ const QuizSchema = new mongoose.Schema({
       type: Boolean,
       default: false,
     },
-    // NEW: Flag for open quizzes
     isOpenQuiz: {
       type: Boolean,
       default: false,
     },
     description: {
       type: String,
-      default: '',
+      default: "",
     },
     instructions: {
       type: String,
-      default: '',
+      default: "",
     },
     duration: {
       hours: {
@@ -120,32 +156,52 @@ const QuizSchema = new mongoose.Schema({
       default: false,
     },
   },
-  
+
   questionSets: {
     type: [QuizQuestionSetSchema],
     validate: {
-      validator: function(v) {
-        return v.length === 4;
-      },
-      message: 'A quiz must have exactly 4 question sets'
-    }
+      validator: function (v) {
+      if (this.settings?.examType === 'single-subject') return v.length === 1;
+      return v.length === 4;
+    },
+    message: 'A multi-subject quiz must have 4 question sets; a single-subject quiz must have 1',
+    },
   },
-  
-  // NEW: Track the question set combination used in this quiz
+
   questionSetCombination: {
     type: [mongoose.Schema.Types.ObjectId],
-    ref: 'QuestionSet',
+    ref: "QuestionSet",
     validate: {
-      validator: function(v) {
-        return v.length === 4;
-      },
-      message: 'Question set combination must contain exactly 4 question sets'
-    }
+     validator: function (v) {
+      if (this.settings?.examType === 'single-subject') return v.length === 1;
+      return v.length === 4;
+    },
+    message: 'Question set combination must contain 1 (single-subject) or 4 (multi-subject) question sets',
+    },
   },
-  
+
+  // NEW: Track batch configuration used in this quiz
+  batchConfiguration: [
+    {
+      questionSetId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "QuestionSet",
+      },
+      batchNumber: {
+        type: Number,
+        min: 1,
+      },
+      order: {
+        type: Number,
+        min: 1,
+        max: 4,
+      },
+    },
+  ],
+
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Admin',
+    ref: "Admin",
     required: true,
   },
   isActive: {
@@ -167,25 +223,50 @@ const QuizSchema = new mongoose.Schema({
 });
 
 // Update totalPoints and questionSetCombination before saving
-QuizSchema.pre('save', function() {
+QuizSchema.pre("save", function () {
   if (this.questionSets && this.questionSets.length > 0) {
     // Calculate total points from all question sets
     this.totalPoints = this.questionSets.reduce((sum, qs) => {
-      const setTotal = qs.questions.reduce((qSum, q) => qSum + (q.points || 0), 0);
+      const setTotal = qs.questions.reduce(
+        (qSum, q) => qSum + (q.points || 0),
+        0,
+      );
       qs.totalPoints = setTotal;
       return sum + setTotal;
     }, 0);
-    
-    // Update questionSetCombination
-    this.questionSetCombination = this.questionSets.map(qs => qs.questionSetId);
+
+    // Update questionSetCombination (just the base IDs, not batch info)
+    this.questionSetCombination = this.questionSets.map(
+      (qs) => qs.questionSetId,
+    );
+
+    // Update batchConfiguration
+    this.batchConfiguration = this.questionSets.map((qs) => ({
+      questionSetId: qs.questionSetId,
+      batchNumber: qs.batchNumber || null,
+      order: qs.order,
+    }));
   }
   this.updatedAt = Date.now();
 });
 
 // Calculate total duration in seconds
-QuizSchema.methods.getTotalDurationInSeconds = function() {
+QuizSchema.methods.getTotalDurationInSeconds = function () {
   const { hours, minutes, seconds } = this.settings.duration;
-  return (hours * 3600) + (minutes * 60) + seconds;
+  return hours * 3600 + minutes * 60 + seconds;
 };
 
-module.exports = mongoose.model('Quiz', QuizSchema);
+// Helper method to get batch info for a specific question set order
+QuizSchema.methods.getBatchInfo = function (order) {
+  const questionSet = this.questionSets.find((qs) => qs.order === order);
+  if (!questionSet) return null;
+
+  return {
+    questionSetId: questionSet.questionSetId,
+    batchNumber: questionSet.batchNumber,
+    batchName: questionSet.batchName,
+    title: questionSet.title,
+  };
+};
+
+module.exports = mongoose.model("Quiz", QuizSchema);

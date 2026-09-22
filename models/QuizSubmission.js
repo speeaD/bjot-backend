@@ -134,7 +134,8 @@ const QuizSubmissionSchema = new mongoose.Schema({
 }, {
   timestamps: true,
 });
-QuizSubmissionSchema.index({ quizId: 1, quizTakerId: 1 }, { unique: true, partialFilterExpression: { status: 'in-progress' } });
+QuizSubmissionSchema.index({ quizId: 1, quizTakerId: 1, 'questionSetSubmissions.questionSetOrder': 1 }, { unique: true, partialFilterExpression: { status: 'in-progress' } });
+
 
 // Calculate percentage before saving
 QuizSubmissionSchema.pre('save', function() {
