@@ -30,6 +30,14 @@ model Admin {
   quizzes          Quiz[]
   gradedSubmissions QuizSubmission[] @relation("GradedBy")
 
+  // Attendance / schedule relations
+  attendanceSessionsCreated AttendanceSession[]      @relation("AttendanceSessionCreatedBy")
+  attendanceWindowsOpened   AttendanceSession[]      @relation("AttendanceWindowOpenedBy")
+  attendanceWindowsClosed   AttendanceSession[]      @relation("AttendanceWindowClosedBy")
+  attendanceWindowEvents    AttendanceWindowEvent[]
+  attendanceRecordsMarked   AttendanceRecord[]
+  schedulesCreated          Schedule[]
+
   @@index([email])
   @@map("admins")
 }
@@ -42,6 +50,9 @@ model QuestionSet {
   title         String   @db.VarChar(255)
   totalPoints   Int      @default(0) @map("total_points")
   questionCount Int      @default(0) @map("question_count")
+  // NEW: true once this set has been converted to use batches (see Batch model below).
+  // Legacy sets with usesBatches = false store their questions directly (Question.batchId = null).
+  usesBatches   Boolean  @default(false) @map("uses_batches")
   isActive      Boolean  @default(true) @map("is_active")
   createdById   String   @map("created_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
@@ -49,15 +60,44 @@ model QuestionSet {
 
   // Relations
   createdBy              Admin                    @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  batches                Batch[]
   questions              Question[]
   quizQuestionSets       QuizQuestionSet[]
   quizTakerQuestionSets  QuizTakerQuestionSet[]
   cbtQuestionSets        CbtQuestionSet[]
   gameSessions           GameSession[]
+  attendanceSessions     AttendanceSession[]
+  weeklyClassSessions    WeeklyClassSession[]
+  scheduleOverrides      ScheduleOverride[]
 
   @@index([isActive])
   @@index([createdById])
   @@map("question_sets")
+}
+
+// =============================================
+// Batch Model (NEW)
+// A question set that "usesBatches" groups its questions into named batches
+// added over time (Batch 1, Batch 2, ...). Legacy sets have no rows here and
+// their Questions have batchId = null.
+// =============================================
+model Batch {
+  id            String   @id @default(uuid()) @db.Uuid
+  questionSetId String   @map("question_set_id") @db.Uuid
+  batchNumber   Int      @map("batch_number")
+  name          String   @db.VarChar(255)
+  totalPoints   Int      @default(0) @map("total_points")
+  questionCount Int      @default(0) @map("question_count")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  questionSet QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  questions   Question[]
+
+  @@unique([questionSetId, batchNumber], name: "unique_set_batch_number")
+  @@index([questionSetId])
+  @@map("question_set_batches")
 }
 
 // =============================================
@@ -66,8 +106,15 @@ model QuestionSet {
 model Question {
   id             String   @id @default(uuid()) @db.Uuid
   questionSetId  String   @map("question_set_id") @db.Uuid
+  // NEW: which batch this question belongs to (null = legacy, unbatched question).
+  batchId        String?  @map("batch_id") @db.Uuid
   type           String   @db.VarChar(50)
   question       String   @db.Text
+  // NEW: optional reading passage the question refers to
+  passage        String   @default("") @db.Text
+  // NEW: optional diagram/image URL + accessibility text
+  diagram        String?  @db.VarChar(500)
+  diagramAlt     String   @default("") @map("diagram_alt") @db.VarChar(500)
   options        Json?    @db.JsonB
   correctAnswer  Json?    @map("correct_answer") @db.JsonB
   points         Int      @default(1)
@@ -108,12 +155,18 @@ model Question {
 
   // Relations
   questionSet       QuestionSet       @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  batch             Batch?            @relation(fields: [batchId], references: [id], onDelete: Cascade)
   quizQuestions     QuizQuestion[]
   gameUsedQuestions GameUsedQuestion[]
   cbtAnswers        CbtAnswer[]
 
-  @@unique([questionSetId, orderNum], name: "unique_question_order")
+  // NOTE: Postgres treats each NULL as distinct in a unique index, so this only
+  // enforces order-uniqueness *within a batch* (batchId not null). Legacy questions
+  // (batchId null) are not covered by this constraint at the DB level and rely on
+  // application/migration-time checks instead.
+  @@unique([questionSetId, batchId, orderNum], name: "unique_question_order_in_batch")
   @@index([questionSetId])
+  @@index([batchId])
   @@index([type])
   @@index([batchNumber])
   @@index([version])
@@ -128,6 +181,9 @@ model Question {
 // =============================================
 model Quiz {
   id                String   @id @default(uuid()) @db.Uuid
+  // NEW: "single-subject" quizzes have exactly 1 question set, "multi-subject" have 4.
+  // (Cardinality itself isn't enforced at the DB level - enforce in the app layer.)
+  examType          String   @default("multi-subject") @map("exam_type") @db.VarChar(20)
   title             String   @db.VarChar(255)
   coverImage        String?  @map("cover_image") @db.VarChar(500)
   isQuizChallenge   Boolean  @default(false) @map("is_quiz_challenge")
@@ -174,6 +230,12 @@ model QuizQuestionSet {
   id             String   @id @default(uuid()) @db.Uuid
   quizId         String   @map("quiz_id") @db.Uuid
   questionSetId  String   @map("question_set_id") @db.Uuid
+  // NEW: snapshot of which batch this quiz's questions were drawn from at creation time.
+  // Not a live FK (the source batch may later be edited/reorganized/deleted) - same
+  // "snapshot" treatment as title/totalPoints below.
+  batchNumber    Int?     @map("batch_number")
+  batchId        String?  @map("batch_id") @db.Uuid
+  batchName      String?  @map("batch_name") @db.VarChar(255)
   title          String   @db.VarChar(255)
   orderNum       Int      @map("order_num")
   totalPoints    Int      @default(0) @map("total_points")
@@ -200,6 +262,9 @@ model QuizQuestion {
   originalQuestionId   String?  @map("original_question_id") @db.Uuid
   type                 String   @db.VarChar(50)
   question             String   @db.Text
+  passage              String   @default("") @db.Text
+  diagram              String?  @db.VarChar(500)
+  diagramAlt           String   @default("") @map("diagram_alt") @db.VarChar(500)
   options              Json?    @db.JsonB
   correctAnswer        Json?    @map("correct_answer") @db.JsonB
   points               Int      @default(1)
@@ -222,6 +287,15 @@ model QuizTaker {
   id           String   @id @default(uuid()) @db.Uuid
   accountType  String   @map("account_type") @db.VarChar(20)
   name         String?  @db.VarChar(255)
+  // NOTE: Mongoose typed these as `Number`, but a phone number with a country code
+  // (e.g. 2348012345678) overflows Postgres's 32-bit Int, so these use BigInt instead.
+  phone        BigInt?
+  firstJamb    Boolean  @default(true) @map("first_jamb")
+  lastJambScore Int     @default(0) @map("last_jamb_score")
+  parentName   String?  @map("parent_name") @db.VarChar(255)
+  parentPhone  BigInt?  @map("parent_phone")
+  department   String?  @db.VarChar(20)
+  course       String?  @db.VarChar(255)
   email        String   @db.VarChar(255)
   accessCode   String?  @unique @map("access_code") @db.VarChar(9)
   isActive     Boolean  @default(true) @map("is_active")
@@ -235,8 +309,10 @@ model QuizTaker {
   cbtSubmissions     CbtSubmission[]
   quizHistory        QuizTakenHistory[]
   gameSessions       GameSession[]
+  attendanceRecords  AttendanceRecord[]
 
   @@index([email, accountType])
+  @@index([department])
   @@map("quiz_takers")
 }
 
@@ -600,4 +676,161 @@ model GameHistory {
 
   @@index([gameSessionId])
   @@map("game_history")
+}
+
+// =============================================
+// Attendance Session (NEW)
+// =============================================
+model AttendanceSession {
+  id                    String    @id @default(uuid()) @db.Uuid
+  department            String    @db.VarChar(20)
+  questionSetId         String    @map("question_set_id") @db.Uuid
+  questionSetTitle      String    @map("question_set_title") @db.VarChar(255)
+  date                  DateTime  @db.Date
+  scheduledStartTime    String    @map("scheduled_start_time") @db.VarChar(10)
+  scheduledEndTime      String    @map("scheduled_end_time") @db.VarChar(10)
+
+  // Attendance window (flattened from Mongo's nested attendanceWindow object)
+  windowIsOpen          Boolean   @default(false) @map("window_is_open")
+  windowOpenedAt        DateTime? @map("window_opened_at")
+  windowClosedAt        DateTime? @map("window_closed_at")
+  windowOpenedById      String?   @map("window_opened_by") @db.Uuid
+  windowClosedById      String?   @map("window_closed_by") @db.Uuid
+  windowDurationMinutes Int       @default(30) @map("window_duration_minutes")
+  windowBufferMinutes   Int       @default(15) @map("window_buffer_minutes")
+
+  status        String    @default("scheduled") @db.VarChar(20)
+  totalStudents Int       @default(0) @map("total_students")
+  presentCount  Int       @default(0) @map("present_count")
+  absentCount   Int       @default(0) @map("absent_count")
+
+  createdById String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  questionSet    QuestionSet             @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+  createdBy      Admin                   @relation("AttendanceSessionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  windowOpenedBy Admin?                  @relation("AttendanceWindowOpenedBy", fields: [windowOpenedById], references: [id], onDelete: SetNull)
+  windowClosedBy Admin?                  @relation("AttendanceWindowClosedBy", fields: [windowClosedById], references: [id], onDelete: SetNull)
+  windowHistory  AttendanceWindowEvent[]
+  records        AttendanceRecord[]
+
+  @@index([department, date, questionSetId])
+  @@index([date, windowIsOpen])
+  @@map("attendance_sessions")
+}
+
+// =============================================
+// Attendance Window Event (NEW)
+// Mongo's AttendanceSession.windowHistory[]
+// =============================================
+model AttendanceWindowEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  action    String   @db.VarChar(10) // 'opened' | 'closed'
+  timestamp DateTime @default(now())
+  adminId   String?  @map("admin_id") @db.Uuid
+
+  // Relations
+  session AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  admin   Admin?            @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@map("attendance_window_events")
+}
+
+// =============================================
+// Attendance Record (NEW)
+// =============================================
+model AttendanceRecord {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionId    String   @map("session_id") @db.Uuid
+  studentId    String   @map("student_id") @db.Uuid
+  studentName  String   @map("student_name") @db.VarChar(255)
+  studentEmail String   @map("student_email") @db.VarChar(255)
+  department   String   @db.VarChar(20)
+  status       String   @default("absent") @db.VarChar(10)
+  markedBy     String   @map("marked_by") @db.VarChar(10) // 'student' | 'admin'
+  adminId      String?  @map("admin_id") @db.Uuid
+  markedAt     DateTime @default(now()) @map("marked_at")
+  isLate       Boolean  @default(false) @map("is_late")
+  minutesLate  Int      @default(0) @map("minutes_late")
+  notes        String   @default("") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  // Relations
+  session AttendanceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student QuizTaker         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  admin   Admin?            @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@unique([sessionId, studentId], name: "unique_session_student")
+  @@index([studentId, createdAt])
+  @@index([sessionId, status])
+  @@map("attendance_records")
+}
+
+// =============================================
+// Schedule (NEW)
+// =============================================
+model Schedule {
+  id          String   @id @default(uuid()) @db.Uuid
+  department  String   @unique @db.VarChar(20)
+  createdById String   @map("created_by") @db.Uuid
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  createdBy     Admin                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  weeklyClasses WeeklyClassSession[]
+  overrides     ScheduleOverride[]
+
+  @@map("schedules")
+}
+
+// =============================================
+// Weekly Class Session (NEW)
+// Mongo's Schedule.weeklySchedule[]
+// =============================================
+model WeeklyClassSession {
+  id               String  @id @default(uuid()) @db.Uuid
+  scheduleId       String  @map("schedule_id") @db.Uuid
+  dayOfWeek        Int     @map("day_of_week") // 0 = Sunday ... 6 = Saturday
+  dayName          String  @map("day_name") @db.VarChar(10)
+  questionSetId    String  @map("question_set_id") @db.Uuid
+  questionSetTitle String  @map("question_set_title") @db.VarChar(255)
+  startTime        String  @default("19:00") @map("start_time") @db.VarChar(10)
+  endTime          String  @default("21:00") @map("end_time") @db.VarChar(10)
+  isActive         Boolean @default(true) @map("is_active")
+
+  // Relations
+  schedule    Schedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  questionSet QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+
+  @@index([scheduleId])
+  @@map("weekly_class_sessions")
+}
+
+// =============================================
+// Schedule Override (NEW)
+// Mongo's Schedule.overrides[] (each embeds its own ClassSession)
+// =============================================
+model ScheduleOverride {
+  id               String   @id @default(uuid()) @db.Uuid
+  scheduleId       String   @map("schedule_id") @db.Uuid
+  date             DateTime @db.Date
+  questionSetId    String   @map("question_set_id") @db.Uuid
+  questionSetTitle String   @map("question_set_title") @db.VarChar(255)
+  startTime        String   @map("start_time") @db.VarChar(10)
+  endTime          String   @map("end_time") @db.VarChar(10)
+  isActive         Boolean  @default(true) @map("is_active")
+  reason           String   @default("") @db.Text
+
+  // Relations
+  schedule    Schedule    @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  questionSet QuestionSet @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
+
+  @@index([scheduleId, date])
+  @@map("schedule_overrides")
 }
