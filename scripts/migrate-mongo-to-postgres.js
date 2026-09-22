@@ -246,19 +246,49 @@ const STATUS_RANK = { pending: 0, 'in-progress': 1, completed: 2 };
 
 async function loadMongo(uri) {
   const mongoose = require('mongoose');
-  await mongoose.connect(uri);
-  const db = mongoose.connection.db;
-  const raw = {};
-  for (const name of MONGO_COLLECTIONS) {
-    raw[name] = await db.collection(name).find({}).toArray();
+  let stage = 'connecting';
+  let read = 0;
+  const heartbeat = setInterval(() => {
+    console.log(`  Still ${stage}${read ? ` (${read} documents read)` : ''}...`);
+  }, 10000);
+  heartbeat.unref();
+
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
+      socketTimeoutMS: 60000,
+    });
+    console.log('  Connected to MongoDB.');
+    const db = mongoose.connection.db;
+    const raw = {};
+    for (const name of MONGO_COLLECTIONS) {
+      stage = `reading ${name}`;
+      read = 0;
+      console.log(`  Reading ${name}...`);
+      raw[name] = [];
+      const cursor = db.collection(name).find({}).batchSize(500);
+      for await (const document of cursor) {
+        raw[name].push(document);
+        read++;
+        if (read % 1000 === 0) console.log(`    ${read} documents read`);
+      }
+      console.log(`  Read ${read} documents from ${name}.`);
+    }
+
+    stage = 'listing other collections';
+    read = 0;
+    const all = (await db.listCollections().toArray()).map((c) => c.name).filter((n) => !n.startsWith('system.'));
+    const unmigrated = [];
+    for (const name of all.filter((n) => !MONGO_COLLECTIONS.includes(n))) {
+      stage = `counting ${name}`;
+      unmigrated.push({ collection: name, documents: await db.collection(name).countDocuments() });
+    }
+    return { raw, unmigrated };
+  } finally {
+    clearInterval(heartbeat);
+    await mongoose.disconnect();
   }
-  const all = (await db.listCollections().toArray()).map((c) => c.name).filter((n) => !n.startsWith('system.'));
-  const unmigrated = [];
-  for (const name of all.filter((n) => !MONGO_COLLECTIONS.includes(n))) {
-    unmigrated.push({ collection: name, documents: await db.collection(name).countDocuments() });
-  }
-  await mongoose.disconnect();
-  return { raw, unmigrated };
 }
 
 /* ───────────────────────────── transform ───────────────────────────── */
@@ -1263,10 +1293,7 @@ async function main() {
     console.log('\nVerifying...');
     const ok = await verify(prisma, out);
     console.log(ok ? '\nMigration verified.' : '\nVerification found mismatches - investigate before switching traffic.');
-    console.log(
-      '\nNext: add the partial unique index via a custom migration (prisma migrate dev --create-only):\n' +
-        "  CREATE UNIQUE INDEX idx_unique_in_progress_submission ON quiz_submissions(quiz_id, quiz_taker_id) WHERE status = 'in-progress';"
-    );
+    console.log('\nEnsure the partial unique index in prisma/post-migration.sql is applied.');
     if (!ok) process.exitCode = 1;
   } finally {
     await prisma.$disconnect();

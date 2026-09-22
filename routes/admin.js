@@ -669,6 +669,55 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
 // @route   DELETE /api/admin/quiztaker/:id
 // @desc    Delete quiz taker
 // @access  Private (Admin only)
+// @route   DELETE /api/admin/quiztakers/bulk-delete
+// @desc    Delete multiple quiz takers (the production route retained for compatibility)
+router.delete("/quiztakers/bulk-delete", verifyAdmin, async (req, res) => {
+  try {
+    const { quizTakerIds } = req.body;
+    if (!Array.isArray(quizTakerIds) || quizTakerIds.length === 0) {
+      return res.status(400).json({ success: false, message: "Please provide quizTakerIds array" });
+    }
+
+    const results = { success: [], failed: [] };
+    for (const quizTakerId of quizTakerIds) {
+      try {
+        const quizTaker = await prisma.quizTaker.findUnique({ where: { id: quizTakerId } });
+        if (!quizTaker) {
+          results.failed.push({ quizTakerId, reason: "Quiz taker not found" });
+          continue;
+        }
+
+        // Relations that reference submissions use restrictive foreign keys, so remove
+        // the submission graph before deleting the quiz taker, as production did.
+        await prisma.$transaction(async (tx) => {
+          const submissions = await tx.quizSubmission.findMany({
+            where: { quizTakerId },
+            select: { id: true },
+          });
+          if (submissions.length) {
+            const submissionIds = submissions.map(({ id }) => id);
+            await tx.quizTakenHistory.deleteMany({ where: { submissionId: { in: submissionIds } } });
+            await tx.quizSubmission.deleteMany({ where: { id: { in: submissionIds } } });
+          }
+          await tx.quizTaker.delete({ where: { id: quizTakerId } });
+        });
+        results.success.push({ quizTakerId, email: quizTaker.email, accountType: quizTaker.accountType });
+      } catch (error) {
+        results.failed.push({ quizTakerId, reason: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Deleted ${results.success.length} quiz taker(s)`,
+      results,
+    });
+  } catch (error) {
+    console.error("Bulk delete error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
 router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
     // Check if quiz taker exists
@@ -707,7 +756,7 @@ router.delete("/quiztaker/:id", verifyAdmin, async (req, res) => {
 // @route   POST /api/admin/quiztakers/assign
 // @desc    Assign quiz to multiple quiz takers (bulk operation)
 // @access  Private (Admin only)
-router.post("/quiztakers/assign", verifyAdmin, async (req, res) => {
+router.post(["/assign-quiz", "/quiztakers/assign"], verifyAdmin, async (req, res) => {
   try {
     const { quizId, quizTakerIds } = req.body;
 
@@ -722,7 +771,8 @@ router.post("/quiztakers/assign", verifyAdmin, async (req, res) => {
     // Check if quiz exists
     // Changed from: Quiz.findById(quizId)
     const quiz = await prisma.quiz.findUnique({
-      where: { id: quizId }
+      where: { id: quizId },
+      include: { questionSets: { select: { questionSetId: true } } },
     });
 
     if (!quiz) {
@@ -743,7 +793,8 @@ router.post("/quiztakers/assign", verifyAdmin, async (req, res) => {
         const quizTaker = await prisma.quizTaker.findUnique({
           where: { id: takerId },
           include: {
-            assignedQuizzes: true
+            assignedQuizzes: true,
+            questionSets: { select: { questionSetId: true } },
           }
         });
 
@@ -758,6 +809,22 @@ router.post("/quiztakers/assign", verifyAdmin, async (req, res) => {
             takerId,
             email: quizTaker.email,
             reason: "Can only assign quizzes to premium students",
+          });
+          continue;
+        }
+
+        const quizCombination = quiz.questionSets.map(({ questionSetId }) => questionSetId);
+        const takerCombination = quizTaker.questionSets.map(({ questionSetId }) => questionSetId);
+        const validCombination = quiz.examType === 'single-subject'
+          ? takerCombination.includes(quizCombination[0])
+          : quizCombination.length === takerCombination.length
+            && quizCombination.every((id) => takerCombination.includes(id));
+        if (!validCombination) {
+          results.failed.push({
+            takerId,
+            reason: quiz.examType === 'single-subject'
+              ? 'Student does not offer the subject required for this single-subject exam'
+              : 'Question set combination does not match quiz requirements',
           });
           continue;
         }

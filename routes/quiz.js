@@ -15,15 +15,21 @@ router.post("/", verifyAdmin, async (req, res) => {
       });
     }
 
+    const examType = settings.examType || "multi-subject";
+    const expectedCount = examType === "single-subject" ? 1 : 4;
     if (
       !questionSetCombination ||
       !Array.isArray(questionSetCombination) ||
-      questionSetCombination.length !== 4
+      questionSetCombination.length !== expectedCount
     ) {
       return res.status(400).json({
         success: false,
-        message: "Exactly 4 question set IDs are required",
+        message: `Exactly ${expectedCount} question set IDs are required`,
       });
+    }
+
+    if (new Set(questionSetCombination).size !== expectedCount) {
+      return res.status(400).json({ success: false, message: "Cannot use the same question set multiple times" });
     }
 
     // Fetch question sets
@@ -40,7 +46,7 @@ router.post("/", verifyAdmin, async (req, res) => {
       },
     });
 
-    if (questionSets.length !== 4) {
+    if (questionSets.length !== expectedCount) {
       return res.status(400).json({
         success: false,
         message: "One or more question sets not found or inactive",
@@ -143,6 +149,7 @@ router.post("/", verifyAdmin, async (req, res) => {
     // Create quiz with filtered question snapshots
     const quiz = await prisma.quiz.create({
       data: {
+        examType,
         title: settings.title,
         coverImage: settings.coverImage || null,
         isQuizChallenge: settings.isQuizChallenge || false,
@@ -361,6 +368,65 @@ router.get("/", verifyAdmin, async (req, res) => {
       message: "Server error",
       error: error.message,
     });
+  }
+});
+
+// @route   GET /api/quiz/slim
+// @desc    Lightweight quiz list used by assignment screens.
+router.get("/slim", verifyAdmin, async (req, res) => {
+  try {
+    const quizzes = await prisma.quiz.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        durationHours: true,
+        durationMinutes: true,
+        durationSeconds: true,
+        isQuizChallenge: true,
+        isOpenQuiz: true,
+        examType: true,
+        questionSets: { select: { questionSetId: true }, orderBy: { orderNum: "asc" } },
+      },
+    });
+    res.json({
+      success: true,
+      quizzes: quizzes.map((quiz) => ({
+        ...quiz,
+        _id: quiz.id,
+        settings: {
+          title: quiz.title,
+          description: quiz.description,
+          duration: { hours: quiz.durationHours, minutes: quiz.durationMinutes, seconds: quiz.durationSeconds },
+          isQuizChallenge: quiz.isQuizChallenge,
+          isOpenQuiz: quiz.isOpenQuiz,
+          examType: quiz.examType,
+        },
+        questionSetCombination: quiz.questionSets.map(({ questionSetId }) => questionSetId),
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+});
+
+// @route   GET /api/quiz/by-combination/:setId1/:setId2/:setId3/:setId4
+// @desc    Find active quizzes using exactly this four-subject combination.
+router.get("/by-combination/:setId1/:setId2/:setId3/:setId4", verifyAdmin, async (req, res) => {
+  try {
+    const combination = [req.params.setId1, req.params.setId2, req.params.setId3, req.params.setId4];
+    const quizzes = await prisma.quiz.findMany({
+      where: {
+        isActive: true,
+        AND: combination.map((questionSetId) => ({ questionSets: { some: { questionSetId } } })),
+      },
+      include: { createdBy: { select: { email: true } }, questionSets: { include: { questionSet: { select: { title: true } } } } },
+    });
+    const exactMatches = quizzes.filter((quiz) => quiz.questionSets.length === 4);
+    res.json({ success: true, count: exactMatches.length, quizzes: exactMatches });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 });
 

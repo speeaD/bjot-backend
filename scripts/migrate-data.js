@@ -870,9 +870,6 @@ async function main() {
     await migrateQuestionSets();
     await migrateQuizzes();
     await migrateSchedules();
-    await migrateQuizTakers();
-    await migrateQuizSubmissions();
-    await migrateCbtSubmissions();
     await migrateGameSessions();
     await migrateAttendanceSessions();
     await migrateAttendanceRecords();

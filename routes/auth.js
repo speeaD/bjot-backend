@@ -4,6 +4,10 @@ const jwt = require('jsonwebtoken');
 const prisma = require('../utils/database');
 const bcrypt = require('bcryptjs'); // You'll need this for password hashing
 
+const generateAccessCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 9 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+};
 
 
 // Generate JWT Token
@@ -206,6 +210,93 @@ router.post('/quiztaker/login', async (req, res) => {
       message: 'Server error', 
       error: error.message 
     });
+  }
+});
+
+// @route   POST /api/auth/quiztaker/register
+// @desc    Register a quiz taker and preserve the production route contract.
+// @access  Public
+router.post('/quiztaker/register', async (req, res) => {
+  try {
+    const {
+      accountType,
+      firstname,
+      lastname,
+      email,
+      questionSetCombination,
+      phone,
+      parentName,
+      parentPhone,
+      department,
+      course,
+      firstJamb,
+      lastJambScore,
+    } = req.body;
+
+    if (!accountType || !firstname || !lastname || !email || !questionSetCombination) {
+      return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+    }
+
+    if (!Array.isArray(questionSetCombination) || questionSetCombination.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid question set combination (array of 4 question set IDs)',
+      });
+    }
+
+    const normalizedEmail = email.trim();
+    const existingQuizTaker = await prisma.quizTaker.findFirst({
+      where: { email: normalizedEmail },
+    });
+    if (existingQuizTaker) {
+      return res.status(400).json({ success: false, message: 'Quiz taker with this email already exists' });
+    }
+
+    const questionSetCount = await prisma.questionSet.count({
+      where: { id: { in: questionSetCombination } },
+    });
+    if (questionSetCount !== 4 || new Set(questionSetCombination).size !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid question set combination (array of 4 question set IDs)',
+      });
+    }
+
+    let accessCode;
+    do {
+      accessCode = generateAccessCode();
+    } while (await prisma.quizTaker.findUnique({ where: { accessCode } }));
+
+    const quizTaker = await prisma.$transaction(async (tx) => {
+      const created = await tx.quizTaker.create({
+        data: {
+          accountType,
+          name: `${firstname.trim()} ${lastname.trim()}`,
+          email: normalizedEmail,
+          accessCode,
+          isActive: false,
+          phone: phone ? BigInt(phone) : null,
+          parentName: parentName?.trim() || null,
+          parentPhone: parentPhone ? BigInt(parentPhone) : null,
+          department: department || null,
+          course: course?.trim() || null,
+          firstJamb: firstJamb ?? true,
+          lastJambScore: lastJambScore ?? 0,
+        },
+      });
+      await tx.quizTakerQuestionSet.createMany({
+        data: questionSetCombination.map((questionSetId) => ({ quizTakerId: created.id, questionSetId })),
+      });
+      return created;
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Quiz taker registered successfully',
+      quizTaker: { id: quizTaker.id, email: quizTaker.email, accessCode: quizTaker.accessCode },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 });
 

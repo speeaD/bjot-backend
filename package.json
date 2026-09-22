@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate:data": "node scripts/migrate-data.js",
+    "migrate:data": "node scripts/migrate-mongo-to-postgres.js",
     "postinstall": "prisma generate"
   },
   "author": "Ejiofor Olisaemeka",
