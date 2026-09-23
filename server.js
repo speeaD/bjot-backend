@@ -8,6 +8,14 @@ dotenv.config();
 
 const app = express();
 
+// Prisma maps PostgreSQL BIGINT columns (such as quiz-taker phone numbers) to
+// JavaScript BigInt values. Native JSON.stringify cannot serialize BigInt, so
+// make every Express JSON response represent them as strings. Phone numbers are
+// identifiers rather than numbers and must not lose precision in transit.
+app.set('json replacer', (_key, value) =>
+  typeof value === 'bigint' ? value.toString() : value
+);
+
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
