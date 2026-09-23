@@ -43,6 +43,81 @@ model Admin {
 }
 
 // =============================================
+// Landing page content
+// =============================================
+// Sections hold editable copy and structured content for all of the landing
+// page's fixed areas. Staff, testimonials and contact details have dedicated
+// models below because they are repeatable, public-facing records.
+model LandingPageSection {
+  id           String   @id @default(uuid()) @db.Uuid
+  page         String   @default("home") @db.VarChar(50)
+  key          String   @unique @db.VarChar(100)
+  label        String   @db.VarChar(255)
+  content      Json     @db.JsonB
+  isVisible    Boolean  @default(true) @map("is_visible")
+  displayOrder Int      @default(0) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([page, isVisible, displayOrder])
+  @@map("landing_page_sections")
+}
+
+model StaffMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(255)
+  role         String?  @db.VarChar(255)
+  course       String?  @db.VarChar(255)
+  bio          String?  @db.Text
+  imageUrl     String?  @map("image_url") @db.VarChar(500)
+  socialLinks  Json?    @map("social_links") @db.JsonB
+  isVisible    Boolean  @default(true) @map("is_visible")
+  displayOrder Int      @default(0) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([isVisible, displayOrder])
+  @@map("staff_members")
+}
+
+model Testimonial {
+  id            String   @id @default(uuid()) @db.Uuid
+  type          String   @default("written") @db.VarChar(20)
+  studentName   String   @map("student_name") @db.VarChar(255)
+  quote         String   @db.Text
+  score         String?  @db.VarChar(50)
+  course        String?  @db.VarChar(255)
+  school        String?  @db.VarChar(255)
+  imageUrl      String?  @map("image_url") @db.VarChar(500)
+  videoUrl      String?  @map("video_url") @db.VarChar(500)
+  videoDuration String?  @map("video_duration") @db.VarChar(20)
+  isVerified    Boolean  @default(false) @map("is_verified")
+  isVisible     Boolean  @default(true) @map("is_visible")
+  displayOrder  Int      @default(0) @map("display_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([type, isVisible, displayOrder])
+  @@map("testimonials")
+}
+
+// A singleton record (id: "default") for the footer and support contact details.
+model LandingPageContact {
+  id          String   @id @default("default") @db.VarChar(50)
+  email       String?  @db.VarChar(255)
+  phone       String?  @db.VarChar(50)
+  whatsapp    String?  @db.VarChar(50)
+  website     String?  @db.VarChar(500)
+  youtube     String?  @db.VarChar(500)
+  address     String?  @db.VarChar(500)
+  socialLinks Json?    @map("social_links") @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("landing_page_contact")
+}
+
+// =============================================
 // Question Set Model
 // =============================================
 model QuestionSet {
@@ -61,6 +136,7 @@ model QuestionSet {
   // Relations
   createdBy              Admin                    @relation(fields: [createdById], references: [id], onDelete: Restrict)
   batches                Batch[]
+  topics                 Topic[]
   questions              Question[]
   quizQuestionSets       QuizQuestionSet[]
   quizTakerQuestionSets  QuizTakerQuestionSet[]
@@ -73,6 +149,30 @@ model QuestionSet {
   @@index([isActive])
   @@index([createdById])
   @@map("question_sets")
+}
+
+// =============================================
+// Topic Model
+// =============================================
+// Topics are the current question-bank grouping for a subject (QuestionSet).
+// Batches remain in place for legacy data and are deliberately independent of
+// topics so they can be migrated gradually.
+model Topic {
+  id            String   @id @default(uuid()) @db.Uuid
+  questionSetId String   @map("question_set_id") @db.Uuid
+  name          String   @db.VarChar(255)
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  questionSet          QuestionSet             @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  questions            Question[]
+  quizTopicSelections  QuizQuestionSetTopic[]
+
+  @@unique([questionSetId, name], name: "unique_topic_name_per_question_set")
+  @@index([questionSetId, isActive])
+  @@map("question_set_topics")
 }
 
 // =============================================
@@ -106,6 +206,8 @@ model Batch {
 model Question {
   id             String   @id @default(uuid()) @db.Uuid
   questionSetId  String   @map("question_set_id") @db.Uuid
+  // Null for legacy/batch questions until they are deliberately migrated.
+  topicId        String?  @map("topic_id") @db.Uuid
   // NEW: which batch this question belongs to (null = legacy, unbatched question).
   batchId        String?  @map("batch_id") @db.Uuid
   type           String   @db.VarChar(50)
@@ -155,6 +257,7 @@ model Question {
 
   // Relations
   questionSet       QuestionSet       @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
+  topic             Topic?            @relation(fields: [topicId], references: [id], onDelete: SetNull)
   batch             Batch?            @relation(fields: [batchId], references: [id], onDelete: Cascade)
   quizQuestions     QuizQuestion[]
   gameUsedQuestions GameUsedQuestion[]
@@ -166,6 +269,7 @@ model Question {
   // application/migration-time checks instead.
   @@unique([questionSetId, batchId, orderNum], name: "unique_question_order_in_batch")
   @@index([questionSetId])
+  @@index([topicId])
   @@index([batchId])
   @@index([type])
   @@index([batchNumber])
@@ -245,12 +349,34 @@ model QuizQuestionSet {
   quiz           Quiz            @relation(fields: [quizId], references: [id], onDelete: Cascade)
   questionSet    QuestionSet     @relation(fields: [questionSetId], references: [id], onDelete: Restrict)
   questions      QuizQuestion[]
+  topicSelections QuizQuestionSetTopic[]
 
   @@unique([quizId, orderNum], name: "unique_quiz_order")
   @@unique([quizId, questionSetId], name: "unique_quiz_question_set")
   @@index([quizId])
   @@index([questionSetId])
   @@map("quiz_question_sets")
+}
+
+// Immutable record of the topic counts requested when an exam was created.
+// Quiz questions are still the source of truth for delivery and grading; this
+// relation provides an auditable explanation of how each subject was composed.
+model QuizQuestionSetTopic {
+  id                 String           @id @default(uuid()) @db.Uuid
+  quizQuestionSetId  String           @map("quiz_question_set_id") @db.Uuid
+  topicId            String           @map("topic_id") @db.Uuid
+  topicName          String           @map("topic_name") @db.VarChar(255)
+  requestedCount     Int              @map("requested_count")
+  selectedCount      Int              @map("selected_count")
+  createdAt          DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  quizQuestionSet    QuizQuestionSet  @relation(fields: [quizQuestionSetId], references: [id], onDelete: Cascade)
+  topic              Topic             @relation(fields: [topicId], references: [id], onDelete: Restrict)
+
+  @@unique([quizQuestionSetId, topicId], name: "unique_quiz_question_set_topic")
+  @@index([topicId])
+  @@map("quiz_question_set_topics")
 }
 
 // =============================================

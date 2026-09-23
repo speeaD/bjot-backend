@@ -3,6 +3,86 @@ const router = express.Router();
 const { verifyAdmin } = require("../middleware/auth");
 const prisma = require("../utils/database");
 
+const badRequest = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+function normalizeTopicSelections(value) {
+  if (!Array.isArray(value) || value.length === 0) throw badRequest("topicSelections must contain at least one topic");
+  const seen = new Set();
+  return value.map((selection) => {
+    const topicId = selection?.topicId;
+    const questionIds = selection?.questionIds === undefined ? [] : selection.questionIds;
+    if (!topicId || !Array.isArray(questionIds) || new Set(questionIds).size !== questionIds.length) {
+      throw badRequest("Each topic selection requires a topicId and unique questionIds when questionIds are supplied");
+    }
+    const suppliedCount = selection?.questionCount;
+    const questionCount = suppliedCount === undefined ? questionIds.length : Number(suppliedCount);
+    if (!Number.isInteger(questionCount) || questionCount < 1 || questionCount < questionIds.length) {
+      throw badRequest("questionCount must be a positive integer and cannot be smaller than the number of selected questionIds");
+    }
+    if (seen.has(topicId)) throw badRequest("A topic can only be selected once per subject");
+    seen.add(topicId);
+    return { topicId, questionCount, questionIds };
+  });
+}
+
+function pickRandom(items, count) {
+  const picked = [...items];
+  for (let index = picked.length - 1; index > 0; index -= 1) {
+    const target = Math.floor(Math.random() * (index + 1));
+    [picked[index], picked[target]] = [picked[target], picked[index]];
+  }
+  return picked.slice(0, count);
+}
+
+function selectQuestions(questionSet, filter) {
+  let questionsToInclude = questionSet.questions;
+  let topicSelections = [];
+
+  if (filter?.topicSelections !== undefined) {
+    const requestedTopics = normalizeTopicSelections(filter.topicSelections);
+    const topicsById = new Map((questionSet.topics || []).filter((topic) => topic.isActive).map((topic) => [topic.id, topic]));
+    questionsToInclude = requestedTopics.flatMap(({ topicId, questionCount, questionIds }) => {
+      const topic = topicsById.get(topicId);
+      if (!topic) throw badRequest(`Topic ${topicId} is not active in question set: ${questionSet.title}`);
+      const available = questionSet.questions.filter((question) => question.topicId === topicId);
+      const availableById = new Map(available.map((question) => [question.id, question]));
+      const specificallySelected = questionIds.map((questionId) => availableById.get(questionId));
+      if (specificallySelected.some((question) => !question)) {
+        throw badRequest(`Every selected question must be active and belong to topic "${topic.name}"`);
+      }
+      const randomCount = questionCount - specificallySelected.length;
+      const remaining = available.filter((question) => !questionIds.includes(question.id));
+      if (remaining.length < randomCount) {
+        throw badRequest(`Topic "${topic.name}" has ${available.length} available question(s), but ${questionCount} were requested`);
+      }
+      const selected = [...specificallySelected, ...pickRandom(remaining, randomCount)];
+      topicSelections.push({ topicId, topicName: topic.name, requestedCount: questionCount, selectedCount: selected.length });
+      return selected;
+    });
+  } else if (filter) {
+    // Legacy batch and metadata filters continue to work for existing clients.
+    if (filter.batchNumber !== undefined) questionsToInclude = questionsToInclude.filter((q) => q.batchNumber === filter.batchNumber);
+    if (filter.version) questionsToInclude = questionsToInclude.filter((q) => q.version === filter.version);
+    if (filter.dateFrom || filter.dateTo) {
+      questionsToInclude = questionsToInclude.filter((q) => {
+        const addedDate = new Date(q.addedDate);
+        return (!filter.dateFrom || addedDate >= new Date(filter.dateFrom)) && (!filter.dateTo || addedDate <= new Date(filter.dateTo));
+      });
+    }
+    if (filter.tags && Array.isArray(filter.tags)) {
+      questionsToInclude = questionsToInclude.filter((q) => {
+        const questionTags = Array.isArray(q.tags) ? q.tags : [];
+        return filter.tags.some((tag) => questionTags.includes(tag));
+      });
+    }
+    if (filter.questionIds && Array.isArray(filter.questionIds)) questionsToInclude = questionsToInclude.filter((q) => filter.questionIds.includes(q.id));
+    if (filter.limit && filter.limit > 0) questionsToInclude = questionsToInclude.slice(0, filter.limit);
+  }
+
+  if (!questionsToInclude.length) throw badRequest(`No questions found matching filters for question set: ${questionSet.title}`);
+  return { questions: questionsToInclude, topicSelections };
+}
+
 router.post("/", verifyAdmin, async (req, res) => {
   try {
     const { questionSetCombination, questionFilters, settings } = req.body;
@@ -39,6 +119,7 @@ router.post("/", verifyAdmin, async (req, res) => {
         isActive: true,
       },
       include: {
+        topics: { where: { isActive: true }, select: { id: true, name: true, isActive: true } },
         questions: {
           where: { isArchived: false },
           orderBy: { orderNum: "asc" },
@@ -65,67 +146,15 @@ router.post("/", verifyAdmin, async (req, res) => {
         // Get filter for this question set (if provided)
         const filter = questionFilters?.[index] || questionFilters?.[setId];
 
-        // Filter questions based on criteria
-        let questionsToInclude = questionSet.questions;
-
-        if (filter) {
-          // Apply batch filter
-          if (filter.batchNumber !== undefined) {
-            questionsToInclude = questionsToInclude.filter(
-              (q) => q.batchNumber === filter.batchNumber,
-            );
-          }
-
-          // Apply version filter
-          if (filter.version) {
-            questionsToInclude = questionsToInclude.filter(
-              (q) => q.version === filter.version,
-            );
-          }
-
-          // Apply date range filter
-          if (filter.dateFrom || filter.dateTo) {
-            questionsToInclude = questionsToInclude.filter((q) => {
-              const addedDate = new Date(q.addedDate);
-              const passesFrom =
-                !filter.dateFrom || addedDate >= new Date(filter.dateFrom);
-              const passesTo =
-                !filter.dateTo || addedDate <= new Date(filter.dateTo);
-              return passesFrom && passesTo;
-            });
-          }
-
-          // Apply tag filter
-          if (filter.tags && Array.isArray(filter.tags)) {
-            questionsToInclude = questionsToInclude.filter((q) => {
-              const questionTags = Array.isArray(q.tags) ? q.tags : [];
-              return filter.tags.some((tag) => questionTags.includes(tag));
-            });
-          }
-
-          // Apply specific question IDs filter
-          if (filter.questionIds && Array.isArray(filter.questionIds)) {
-            questionsToInclude = questionsToInclude.filter((q) =>
-              filter.questionIds.includes(q.id),
-            );
-          }
-
-          // Apply limit (max number of questions)
-          if (filter.limit && filter.limit > 0) {
-            questionsToInclude = questionsToInclude.slice(0, filter.limit);
-          }
-        }
-
-        if (questionsToInclude.length === 0) {
-          throw new Error(
-            `No questions found matching filters for question set: ${questionSet.title}`,
-          );
-        }
+        const { questions: questionsToInclude, topicSelections } = selectQuestions(questionSet, filter);
 
         // Create snapshot of filtered questions
         const questions = questionsToInclude.map((q) => ({
           type: q.type,
           question: q.question,
+          passage: q.passage,
+          diagram: q.diagram,
+          diagramAlt: q.diagramAlt,
           options: q.options,
           correctAnswer: q.correctAnswer,
           points: q.points,
@@ -137,6 +166,7 @@ router.post("/", verifyAdmin, async (req, res) => {
           questionSetId: questionSet.id,
           title: questionSet.title,
           questions,
+          topicSelections,
           totalPoints: questions.reduce((sum, q) => sum + (q.points || 0), 0),
           order: index + 1,
         };
@@ -172,13 +202,17 @@ router.post("/", verifyAdmin, async (req, res) => {
             title: qqs.title,
             orderNum: qqs.order,
             totalPoints: qqs.totalPoints,
+            topicSelections: qqs.topicSelections.length ? { create: qqs.topicSelections } : undefined,
             questions: {
               create: qqs.questions.map((q, idx) => ({
                 originalQuestionId: q.originalQuestionId,
                 type: q.type,
                 question: q.question,
-                options: q.options || null,
-                correctAnswer: q.correctAnswer || null,
+                passage: q.passage,
+                diagram: q.diagram,
+                diagramAlt: q.diagramAlt,
+                options: q.options ?? null,
+                correctAnswer: q.correctAnswer ?? null,
                 points: q.points,
                 orderNum: idx + 1,
               })),
@@ -190,6 +224,7 @@ router.post("/", verifyAdmin, async (req, res) => {
         questionSets: {
           include: {
             questions: true,
+            topicSelections: true,
           },
         },
       },
@@ -203,7 +238,7 @@ router.post("/", verifyAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating quiz:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: "Server error",
       error: error.message,
@@ -222,6 +257,29 @@ router.post("/preview-questions", verifyAdmin, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Question set ID is required",
+      });
+    }
+
+    // Topic selections need subject-scoped validation and random sampling, so
+    // preview them through the same code path used when creating an exam.
+    if (filter?.topicSelections !== undefined) {
+      const questionSet = await prisma.questionSet.findUnique({
+        where: { id: questionSetId },
+        include: {
+          topics: { where: { isActive: true }, select: { id: true, name: true, isActive: true } },
+          questions: { where: { isArchived: false }, orderBy: { orderNum: "asc" } },
+        },
+      });
+      if (!questionSet) return res.status(404).json({ success: false, message: "Question set not found" });
+      const selection = selectQuestions(questionSet, filter);
+      const totalPoints = selection.questions.reduce((sum, question) => sum + (question.points || 0), 0);
+      return res.json({
+        success: true,
+        questionCount: selection.questions.length,
+        totalPoints,
+        filter,
+        topicSelections: selection.topicSelections,
+        questions: selection.questions.map((q) => ({ id: q.id, question: q.question.substring(0, 100) + (q.question.length > 100 ? "..." : ""), type: q.type, points: q.points, topicId: q.topicId })),
       });
     }
 
@@ -306,7 +364,7 @@ router.post("/preview-questions", verifyAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("Error previewing questions:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: "Server error",
       error: error.message,
@@ -549,16 +607,15 @@ router.put("/:id", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
   try {
-    const { questionSetIds } = req.body;
+    const { questionSetIds, questionFilters } = req.body;
 
     if (
       !questionSetIds ||
-      !Array.isArray(questionSetIds) ||
-      questionSetIds.length !== 4
+      !Array.isArray(questionSetIds)
     ) {
       return res.status(400).json({
         success: false,
-        message: "Exactly 4 question set IDs are required",
+        message: "Question set IDs are required",
       });
     }
 
@@ -574,6 +631,11 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
       });
     }
 
+    const expectedCount = quiz.examType === "single-subject" ? 1 : 4;
+    if (questionSetIds.length !== expectedCount || new Set(questionSetIds).size !== expectedCount) {
+      return res.status(400).json({ success: false, message: `Exactly ${expectedCount} distinct question set IDs are required` });
+    }
+
     // Fetch all question sets
     // Changed from: QuestionSet.find({ _id: { $in: questionSetIds }, isActive: true })
     const questionSets = await prisma.questionSet.findMany({
@@ -582,6 +644,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         isActive: true,
       },
       include: {
+        topics: { where: { isActive: true }, select: { id: true, name: true, isActive: true } },
         questions: {
           where: { isArchived: false },
           orderBy: { orderNum: 'asc' }
@@ -589,7 +652,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
       }
     });
 
-    if (questionSets.length !== 4) {
+    if (questionSets.length !== expectedCount) {
       return res.status(400).json({
         success: false,
         message: "One or more question sets not found or inactive",
@@ -604,9 +667,14 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         throw new Error(`Question set with ID ${setId} not found`);
       }
 
-      const questions = questionSet.questions.map((q) => ({
+      const filter = questionFilters?.[index] || questionFilters?.[setId];
+      const { questions: selectedQuestions, topicSelections } = selectQuestions(questionSet, filter);
+      const questions = selectedQuestions.map((q) => ({
         type: q.type,
         question: q.question,
+        passage: q.passage,
+        diagram: q.diagram,
+        diagramAlt: q.diagramAlt,
         options: q.options,
         correctAnswer: q.correctAnswer,
         points: q.points,
@@ -620,6 +688,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         questionSetId: questionSet.id,
         title: questionSet.title,
         questions,
+        topicSelections,
         totalPoints,
         orderNum: index + 1,
       };
@@ -657,12 +726,21 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         const quizQS = createdQuizQuestionSets[i];
         const questions = quizQuestionSets[i].questions;
 
+        if (quizQuestionSets[i].topicSelections.length) {
+          await tx.quizQuestionSetTopic.createMany({
+            data: quizQuestionSets[i].topicSelections.map((topic) => ({ quizQuestionSetId: quizQS.id, ...topic })),
+          });
+        }
+
         await tx.quizQuestion.createMany({
           data: questions.map(q => ({
             quizQuestionSetId: quizQS.id,
             originalQuestionId: q.originalQuestionId,
             type: q.type,
             question: q.question,
+            passage: q.passage,
+            diagram: q.diagram,
+            diagramAlt: q.diagramAlt,
             options: q.options,
             correctAnswer: q.correctAnswer,
             points: q.points,
@@ -678,7 +756,8 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         include: {
           questionSets: {
             include: {
-              questions: true
+              questions: true,
+              topicSelections: true,
             }
           }
         }
@@ -692,7 +771,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating quiz question sets:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: "Server error",
       error: error.message,

@@ -9,6 +9,7 @@ const TYPES = new Set(['multiple-choice', 'essay', 'true-false', 'fill-in-the-bl
 const INCLUDE = {
   createdBy: { select: { id: true, email: true } },
   batches: { include: { questions: { orderBy: { orderNum: 'asc' } } }, orderBy: { batchNumber: 'asc' } },
+  topics: { include: { _count: { select: { questions: true } } }, orderBy: { name: 'asc' } },
   questions: { orderBy: { orderNum: 'asc' } },
 };
 
@@ -76,17 +77,83 @@ router.post('/bulk-upload', verifyAdmin, async (req, res) => {
       const questions = parseUpload(req.file);
       if (!title) return res.status(400).json({ success: false, message: 'Question set title is required' });
       if (!questions.length) return res.status(400).json({ success: false, message: 'No valid questions found in file' });
+      const topicName = req.body.topicName?.trim();
       const usesBatches = req.body.usesBatches === 'true';
       const batchNumber = Number.parseInt(req.body.batchNumber, 10) || 1;
+      if (topicName && usesBatches) return res.status(400).json({ success: false, message: 'Upload questions to either a topic or a batch, not both' });
       const questionSet = await prisma.$transaction(async (tx) => {
         const created = await tx.questionSet.create({ data: { title, createdById: req.admin.id, usesBatches } });
         const batch = usesBatches ? await tx.batch.create({ data: { questionSetId: created.id, batchNumber, name: req.body.batchName?.trim() || `Batch ${batchNumber}` } }) : null;
-        await tx.question.createMany({ data: normalizeQuestions(questions, 0, { questionSetId: created.id, batchId: batch?.id || null, batchNumber: batch?.batchNumber || null }) });
+        const topic = topicName ? await tx.topic.create({ data: { questionSetId: created.id, name: topicName } }) : null;
+        await tx.question.createMany({ data: normalizeQuestions(questions, 0, { questionSetId: created.id, topicId: topic?.id || null, batchId: batch?.id || null, batchNumber: batch?.batchNumber || null }) });
         await refreshTotals(tx, created.id);
         return tx.questionSet.findUnique({ where: { id: created.id }, include: INCLUDE });
       });
       res.status(201).json({ success: true, message: `Question set created successfully with ${questions.length} questions`, questionSet });
     } catch (error) { res.status(500).json({ success: false, message: 'Server error', error: error.message }); }
+  });
+});
+
+// Topics are the current, flat grouping for questions in a subject. These
+// endpoints intentionally coexist with batches so old data stays usable.
+router.get('/:id/topics', verifyAdmin, async (req, res) => {
+  try {
+    const set = await prisma.questionSet.findUnique({ where: { id: req.params.id } });
+    if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
+    const where = { questionSetId: set.id, ...(req.query.isActive !== undefined && { isActive: req.query.isActive === 'true' }) };
+    const topics = await prisma.topic.findMany({ where, include: { _count: { select: { questions: true } } }, orderBy: { name: 'asc' } });
+    res.json({ success: true, count: topics.length, topics });
+  } catch (error) { res.status(500).json({ success: false, message: 'Server error', error: error.message }); }
+});
+
+router.post('/:id/topics', verifyAdmin, async (req, res) => {
+  try {
+    const name = req.body.name?.trim();
+    if (!name) return res.status(400).json({ success: false, message: 'Topic name is required' });
+    const set = await prisma.questionSet.findUnique({ where: { id: req.params.id } });
+    if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
+    const topic = await prisma.topic.create({ data: { questionSetId: set.id, name } });
+    res.status(201).json({ success: true, message: 'Topic created successfully', topic });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+router.put('/:id/topics/:topicId', verifyAdmin, async (req, res) => {
+  try {
+    const topic = await prisma.topic.findFirst({ where: { id: req.params.topicId, questionSetId: req.params.id } });
+    if (!topic) return res.status(404).json({ success: false, message: 'Topic not found' });
+    if (req.body.name !== undefined && !String(req.body.name).trim()) return res.status(400).json({ success: false, message: 'Topic name cannot be empty' });
+    const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(req.body.name !== undefined && { name: String(req.body.name).trim() }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
+    res.json({ success: true, message: 'Topic updated successfully', topic: updated });
+  } catch (error) {
+    if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+});
+
+// Upload or add questions directly to one existing topic. Multipart requests
+// use the same CSV/XLSX format as the legacy bulk-upload route.
+router.post('/:id/topics/:topicId/questions', verifyAdmin, async (req, res) => {
+  const upload = req.app.get('upload');
+  upload.single('file')(req, res, async (uploadError) => {
+    if (uploadError) return res.status(400).json({ success: false, message: uploadError.message });
+    try {
+      const rawQuestions = req.file ? parseUpload(req.file) : req.body.questions;
+      const questions = typeof rawQuestions === 'string' ? JSON.parse(rawQuestions) : rawQuestions;
+      if (!Array.isArray(questions) || !questions.length) return res.status(400).json({ success: false, message: 'Either a file upload or a questions array in the body is required' });
+      const questionSet = await prisma.$transaction(async (tx) => {
+        const topic = await tx.topic.findFirst({ where: { id: req.params.topicId, questionSetId: req.params.id, isActive: true }, include: { questionSet: { include: { questions: true } } } });
+        if (!topic) return null;
+        const last = topic.questionSet.questions.reduce((max, item) => Math.max(max, item.orderNum), 0);
+        await tx.question.createMany({ data: normalizeQuestions(questions, last, { questionSetId: topic.questionSetId, topicId: topic.id }) });
+        await refreshTotals(tx, topic.questionSetId);
+        return tx.questionSet.findUnique({ where: { id: topic.questionSetId }, include: INCLUDE });
+      });
+      if (!questionSet) return res.status(404).json({ success: false, message: 'Active topic not found for this question set' });
+      res.status(201).json({ success: true, message: `Added ${questions.length} questions to topic successfully`, questionSet });
+    } catch (error) { res.status(500).json({ success: false, message: 'Server error while adding topic questions', error: error.message }); }
   });
 });
 
@@ -219,7 +286,11 @@ router.post('/:id/questions', verifyAdmin, async (req, res) => {
 router.put('/:id/questions/:questionId', verifyAdmin, async (req, res) => {
   try {
     const original = await prisma.question.findFirst({ where: { id: req.params.questionId, questionSetId: req.params.id } }); if (!original) return res.status(404).json({ success: false, message: 'Question not found' });
-    const allowed = ['type', 'question', 'passage', 'diagram', 'diagramAlt', 'options', 'correctAnswer', 'points', 'orderNum', 'tags', 'version', 'metadata'];
+    if (req.body.topicId !== undefined && req.body.topicId !== null) {
+      const topic = await prisma.topic.findFirst({ where: { id: req.body.topicId, questionSetId: req.params.id } });
+      if (!topic) return res.status(400).json({ success: false, message: 'Topic does not belong to this question set' });
+    }
+    const allowed = ['type', 'question', 'passage', 'diagram', 'diagramAlt', 'options', 'correctAnswer', 'points', 'orderNum', 'tags', 'version', 'metadata', 'topicId'];
     const data = Object.fromEntries(allowed.filter((field) => req.body[field] !== undefined).map((field) => [field, req.body[field]]));
     await prisma.$transaction(async (tx) => { await tx.question.update({ where: { id: original.id }, data }); await refreshTotals(tx, req.params.id); });
     res.json({ success: true, message: 'Question updated successfully', questionSet: await getSet(req.params.id) });
@@ -252,7 +323,7 @@ router.post('/:id/questions/batch', verifyAdmin, async (req, res) => {
 router.get('/:id/questions/filter', verifyAdmin, async (req, res) => {
   try {
     const where = { questionSetId: req.params.id };
-    if (req.query.batch) where.batchNumber = Number.parseInt(req.query.batch, 10); if (req.query.version) where.version = req.query.version; if (req.query.archived !== undefined) where.isArchived = req.query.archived === 'true';
+    if (req.query.topicId) where.topicId = req.query.topicId; if (req.query.batch) where.batchNumber = Number.parseInt(req.query.batch, 10); if (req.query.version) where.version = req.query.version; if (req.query.archived !== undefined) where.isArchived = req.query.archived === 'true';
     if (req.query.dateFrom || req.query.dateTo) where.addedDate = { ...(req.query.dateFrom && { gte: new Date(req.query.dateFrom) }), ...(req.query.dateTo && { lte: new Date(req.query.dateTo) }) };
     if (req.query.tags) where.tags = { array_contains: req.query.tags.split(',').map((tag) => tag.trim()) };
     const questions = await prisma.question.findMany({ where, orderBy: { orderNum: 'asc' } }); res.json({ success: true, count: questions.length, filters: req.query, questions });
