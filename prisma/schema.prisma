@@ -168,11 +168,26 @@ model Topic {
   // Relations
   questionSet          QuestionSet             @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
   questions            Question[]
+  tests                TopicTest[]
   quizTopicSelections  QuizQuestionSetTopic[]
 
   @@unique([questionSetId, name], name: "unique_topic_name_per_question_set")
   @@index([questionSetId, isActive])
   @@map("question_set_topics")
+}
+
+// A published selection of questions for one student-facing topic test.
+model TopicTest {
+  id          String   @id @default(uuid()) @db.Uuid
+  topicId     String   @map("topic_id") @db.Uuid
+  title       String   @db.VarChar(255)
+  questionIds Json     @map("question_ids") @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId, createdAt])
+  @@map("topic_tests")
 }
 
 // =============================================

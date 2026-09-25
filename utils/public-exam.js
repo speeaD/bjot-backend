@@ -55,4 +55,11 @@ function validateAnswers(answers, questionIds) {
     !seen.has(item.questionId) && (seen.add(item.questionId), true) && typeof item.answer === 'string' && item.answer.length <= 1000);
 }
 
-module.exports = { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers };
+function selectedTestQuestions(questionIds, availableQuestions) {
+  if (!Array.isArray(questionIds) || !questionIds.length) return null;
+  const byId = new Map(availableQuestions.map((question) => [question.id, question]));
+  const selected = questionIds.map((id) => byId.get(id));
+  return selected.some((question) => !question) ? null : selected;
+}
+
+module.exports = { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers, selectedTestQuestions };

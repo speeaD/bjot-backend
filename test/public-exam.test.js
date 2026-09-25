@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { gradeQuestions, publicQuestion, validateAnswers } = require('../utils/public-exam');
+const { gradeQuestions, publicQuestion, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
 
 const questions = [
   { id: 'q1', type: 'multiple-choice', question: 'Pick B', options: ['A. wrong', 'B. right'], correctAnswer: 'B', points: 2, orderNum: 1 },
@@ -29,4 +29,9 @@ test('rejects duplicate or foreign answers', () => {
   assert.equal(validateAnswers([{ questionId: 'q1', answer: 'B. right' }], allowed), true);
   assert.equal(validateAnswers([{ questionId: 'q1', answer: 'x' }, { questionId: 'q1', answer: 'x' }], allowed), false);
   assert.equal(validateAnswers([{ questionId: 'outside', answer: 'x' }], allowed), false);
+});
+
+test('published topic tests retain the chosen question order and fail if a question is no longer available', () => {
+  assert.deepEqual(selectedTestQuestions(['q3', 'q1'], questions).map((item) => item.id), ['q3', 'q1']);
+  assert.equal(selectedTestQuestions(['q3', 'removed'], questions), null);
 });

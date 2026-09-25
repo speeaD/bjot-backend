@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/database');
-const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers } = require('../utils/public-exam');
+const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -91,6 +91,18 @@ router.post('/mock/sessions/:id/submit', async (req, res) => {
 
 async function findTopic(query) {
   if (typeof query.topicId === 'string' && UUID.test(query.topicId)) {
+    const test = await prisma.topicTest.findUnique({ where: { id: query.topicId }, include: {
+      topic: { include: { questionSet: { select: { id: true, title: true, isActive: true } } } },
+    } });
+    if (test) {
+      if (!test.topic.isActive || !test.topic.questionSet.isActive) return null;
+      if (!Array.isArray(test.questionIds) || !test.questionIds.length) return null;
+      const available = await prisma.question.findMany({ where: { id: { in: test.questionIds }, topicId: test.topicId,
+        isArchived: false, type: { in: [...AUTO_GRADED_TYPES] } } });
+      const questions = selectedTestQuestions(test.questionIds, available);
+      if (!questions) return null;
+      return { id: test.id, name: test.title, questionSet: test.topic.questionSet, questions };
+    }
     return prisma.topic.findFirst({ where: { id: query.topicId, isActive: true, questionSet: { isActive: true } },
       include: { questionSet: { select: { id: true, title: true } }, questions: { where: { isArchived: false, type: { in: [...AUTO_GRADED_TYPES] } }, orderBy: { orderNum: 'asc' } } } });
   }

@@ -4,8 +4,10 @@ const Papa = require('papaparse');
 const router = express.Router();
 const { verifyAdmin } = require('../middleware/auth');
 const prisma = require('../utils/database');
+const { AUTO_GRADED_TYPES } = require('../utils/public-exam');
 
 const TYPES = new Set(['multiple-choice', 'essay', 'true-false', 'fill-in-the-blanks']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INCLUDE = {
   createdBy: { select: { id: true, email: true } },
   batches: { include: { questions: { orderBy: { orderNum: 'asc' } } }, orderBy: { batchNumber: 'asc' } },
@@ -164,9 +166,27 @@ router.get('/:id/topics', verifyAdmin, async (req, res) => {
     const set = await prisma.questionSet.findUnique({ where: { id: req.params.id } });
     if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
     const where = { questionSetId: set.id, ...(req.query.isActive !== undefined && { isActive: req.query.isActive === 'true' }) };
-    const topics = await prisma.topic.findMany({ where, include: { _count: { select: { questions: true } } }, orderBy: { name: 'asc' } });
+    const topics = await prisma.topic.findMany({ where, include: { _count: { select: { questions: true } }, tests: { orderBy: { createdAt: 'desc' } } }, orderBy: { name: 'asc' } });
     res.json({ success: true, count: topics.length, topics: topics.map((topic) => ({ ...topic, studentPath: `/topic-test?topicId=${topic.id}` })) });
   } catch (error) { res.status(500).json({ success: false, message: 'Server error', error: error.message }); }
+});
+
+router.post('/:id/topics/:topicId/tests', verifyAdmin, async (req, res) => {
+  try {
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const questionIds = req.body?.questionIds;
+    if (!title || title.length > 255) return res.status(400).json({ success: false, message: 'Enter a test title of 255 characters or fewer' });
+    if (!Array.isArray(questionIds) || !questionIds.length || questionIds.length > 500 ||
+      questionIds.some((id) => typeof id !== 'string' || !UUID.test(id)) || new Set(questionIds).size !== questionIds.length) {
+      return res.status(400).json({ success: false, message: 'Select between 1 and 500 different questions' });
+    }
+    const topic = await prisma.topic.findFirst({ where: { id: req.params.topicId, questionSetId: req.params.id, isActive: true, questionSet: { isActive: true } } });
+    if (!topic) return res.status(404).json({ success: false, message: 'Active topic not found' });
+    const available = await prisma.question.findMany({ where: { id: { in: questionIds }, questionSetId: req.params.id, topicId: topic.id, isArchived: false, type: { in: [...AUTO_GRADED_TYPES] } }, select: { id: true } });
+    if (available.length !== questionIds.length) return res.status(400).json({ success: false, message: 'Some selected questions are unavailable for this topic test' });
+    const test = await prisma.topicTest.create({ data: { topicId: topic.id, title, questionIds } });
+    res.status(201).json({ success: true, test: { ...test, studentPath: `/topic-test?topicId=${test.id}` } });
+  } catch (error) { res.status(500).json({ success: false, message: 'Could not create topic test' }); }
 });
 
 router.post('/:id/topics', verifyAdmin, async (req, res) => {
