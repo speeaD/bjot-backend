@@ -66,6 +66,69 @@ async function refreshTotals(tx, questionSetId) {
 
 const getSet = (id, include = INCLUDE) => prisma.questionSet.findUnique({ where: { id }, include });
 
+// Publish a reviewed question draft across several topics in one transaction.
+// The organizer sends answer letters; stored answers use option text so all
+// existing exam grading paths continue to compare the selected option value.
+router.post('/topics/import', verifyAdmin, async (req, res) => {
+  const body = req.body || {};
+  const questionSetId = typeof body.questionSetId === 'string' ? body.questionSetId.trim() : '';
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const input = body.questions;
+  if (!questionSetId && (!title || title.length > 255)) return res.status(400).json({ success: false, message: 'Enter a subject title of 255 characters or fewer' });
+  if (!Array.isArray(input) || input.length < 1 || input.length > 500) return res.status(400).json({ success: false, message: 'Provide between 1 and 500 questions' });
+
+  const questions = [];
+  for (let index = 0; index < input.length; index++) {
+    const item = input[index];
+    const topic = typeof item?.topic === 'string' ? item.topic.trim() : '';
+    const question = typeof item?.question === 'string' ? item.question.trim() : '';
+    const options = item?.options;
+    const letter = typeof item?.correctLetter === 'string' ? item.correctLetter.toUpperCase() : '';
+    const explanation = typeof item?.explanation === 'string' ? item.explanation.trim() : '';
+    if (!topic || topic.length > 255 || !question || question.length > 10000 || !Array.isArray(options) || options.length !== 4 ||
+      options.some((value) => typeof value !== 'string' || !value.trim() || value.length > 2000) || !/^[A-D]$/.test(letter) || explanation.length > 10000) {
+      return res.status(400).json({ success: false, message: `Question ${index + 1} has a missing or invalid topic, text, option, answer, or explanation` });
+    }
+    questions.push({ topic, question, options: options.map((value) => value.trim()), correctAnswer: options[letter.charCodeAt(0) - 65].trim(), explanation });
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const set = questionSetId
+        ? await tx.questionSet.findUnique({ where: { id: questionSetId } })
+        : await tx.questionSet.create({ data: { title, createdById: req.admin.id } });
+      if (!set) return null;
+      const existing = await tx.topic.findMany({ where: { questionSetId: set.id } });
+      const topicByName = new Map(existing.map((item) => [item.name.toLocaleLowerCase(), item]));
+      const uniqueNames = new Map(questions.map((item) => [item.topic.toLocaleLowerCase(), item.topic]));
+      for (const [key, name] of uniqueNames) {
+        if (!topicByName.has(key)) {
+          const created = await tx.topic.create({ data: { questionSetId: set.id, name } });
+          topicByName.set(key, created);
+        }
+      }
+      for (const item of questions) {
+        if (!topicByName.get(item.topic.toLocaleLowerCase()).isActive) {
+          throw new Error(`Topic "${item.topic}" is inactive`);
+        }
+      }
+      const last = await tx.question.aggregate({ where: { questionSetId: set.id }, _max: { orderNum: true } });
+      await tx.question.createMany({ data: questions.map((item, index) => ({
+        questionSetId: set.id, topicId: topicByName.get(item.topic.toLocaleLowerCase()).id,
+        type: 'multiple-choice', question: item.question, options: item.options,
+        correctAnswer: item.correctAnswer, points: 1, orderNum: (last._max.orderNum || 0) + index + 1,
+        metadata: item.explanation ? { explanation: item.explanation } : undefined,
+      })) });
+      await refreshTotals(tx, set.id);
+      return { id: set.id, title: set.title, count: questions.length, topics: [...uniqueNames.values()] };
+    }, { timeout: 20000 });
+    if (!result) return res.status(404).json({ success: false, message: 'Subject not found' });
+    res.status(201).json({ success: true, message: `Added ${result.count} questions across ${result.topics.length} topics`, ...result });
+  } catch (error) {
+    res.status(error.code === 'P2002' ? 409 : 400).json({ success: false, message: error.message || 'Could not import questions' });
+  }
+});
+
 // Production-compatible creation route. It accepts the existing CSV/XLSX upload format.
 router.post('/bulk-upload', verifyAdmin, async (req, res) => {
   const upload = req.app.get('upload');
@@ -102,7 +165,7 @@ router.get('/:id/topics', verifyAdmin, async (req, res) => {
     if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
     const where = { questionSetId: set.id, ...(req.query.isActive !== undefined && { isActive: req.query.isActive === 'true' }) };
     const topics = await prisma.topic.findMany({ where, include: { _count: { select: { questions: true } } }, orderBy: { name: 'asc' } });
-    res.json({ success: true, count: topics.length, topics });
+    res.json({ success: true, count: topics.length, topics: topics.map((topic) => ({ ...topic, studentPath: `/topic-test?topicId=${topic.id}` })) });
   } catch (error) { res.status(500).json({ success: false, message: 'Server error', error: error.message }); }
 });
 
@@ -113,7 +176,7 @@ router.post('/:id/topics', verifyAdmin, async (req, res) => {
     const set = await prisma.questionSet.findUnique({ where: { id: req.params.id } });
     if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
     const topic = await prisma.topic.create({ data: { questionSetId: set.id, name } });
-    res.status(201).json({ success: true, message: 'Topic created successfully', topic });
+    res.status(201).json({ success: true, message: 'Topic created successfully', topic: { ...topic, studentPath: `/topic-test?topicId=${topic.id}` } });
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
@@ -126,7 +189,7 @@ router.put('/:id/topics/:topicId', verifyAdmin, async (req, res) => {
     if (!topic) return res.status(404).json({ success: false, message: 'Topic not found' });
     if (req.body.name !== undefined && !String(req.body.name).trim()) return res.status(400).json({ success: false, message: 'Topic name cannot be empty' });
     const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(req.body.name !== undefined && { name: String(req.body.name).trim() }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
-    res.json({ success: true, message: 'Topic updated successfully', topic: updated });
+    res.json({ success: true, message: 'Topic updated successfully', topic: { ...updated, studentPath: `/topic-test?topicId=${updated.id}` } });
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
     res.status(500).json({ success: false, message: 'Server error', error: error.message });

@@ -320,11 +320,54 @@ model Quiz {
   submissions       QuizSubmission[]
   assignedQuizzes   AssignedQuiz[]
   quizHistory       QuizTakenHistory[]
+  publicMockSessions PublicMockSession[]
 
   @@index([isActive])
   @@index([isQuizChallenge])
   @@index([createdById])
   @@map("quizzes")
+}
+
+// Public free mock sessions are separate from premium quiz submissions.
+// A grade is claimed once per normalized email and open quiz.
+model PublicMockSession {
+  id          String    @id @default(uuid()) @db.Uuid
+  quizId      String    @map("quiz_id") @db.Uuid
+  name        String    @db.VarChar(255)
+  email       String    @db.VarChar(255)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  attempt     PublicMockAttempt?
+  quiz        Quiz      @relation(fields: [quizId], references: [id], onDelete: Restrict)
+
+  @@index([quizId, email])
+  @@map("public_mock_sessions")
+}
+
+model PublicMockAttempt {
+  id          String    @id @default(uuid()) @db.Uuid
+  sessionId   String    @unique @map("session_id") @db.Uuid
+  score       Int
+  totalPoints Int       @map("total_points")
+  percentage  Decimal   @db.Decimal(5, 2)
+  answers     Json      @db.JsonB
+  submittedAt DateTime  @default(now()) @map("submitted_at")
+  session     PublicMockSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("public_mock_attempts")
+}
+
+model PublicMockGrade {
+  id          String    @id @default(uuid()) @db.Uuid
+  quizId      String    @map("quiz_id") @db.Uuid
+  email       String    @db.VarChar(255)
+  attemptId   String    @unique @map("attempt_id") @db.Uuid
+  score       Int
+  totalPoints Int       @map("total_points")
+  percentage  Decimal   @db.Decimal(5, 2)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([quizId, email])
+  @@map("public_mock_grades")
 }
 
 // =============================================
