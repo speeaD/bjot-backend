@@ -169,6 +169,8 @@ model Topic {
   questionSet          QuestionSet             @relation(fields: [questionSetId], references: [id], onDelete: Cascade)
   questions            Question[]
   tests                TopicTest[]
+  studyMaterials       StudyMaterial[]
+  studyAttempts        StudyAttempt[]
   quizTopicSelections  QuizQuestionSetTopic[]
 
   @@unique([questionSetId, name], name: "unique_topic_name_per_question_set")
@@ -188,6 +190,44 @@ model TopicTest {
 
   @@index([topicId, createdAt])
   @@map("topic_tests")
+}
+
+model StudyMaterial {
+  id           String   @id @default(uuid()) @db.Uuid
+  topicId      String   @map("topic_id") @db.Uuid
+  title        String   @db.VarChar(255)
+  type         String   @db.VarChar(20)
+  content      String   @db.Text
+  altText      String   @default("") @map("alt_text") @db.VarChar(500)
+  displayOrder Int      @default(0) @map("display_order")
+  isPublished  Boolean  @default(false) @map("is_published")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId, isPublished, displayOrder])
+  @@map("study_materials")
+}
+
+model StudyAttempt {
+  id          String    @id @default(uuid()) @db.Uuid
+  topicId     String    @map("topic_id") @db.Uuid
+  studentId   String    @map("student_id") @db.Uuid
+  questionIds Json      @map("question_ids") @db.JsonB
+  questionSnapshot Json @map("question_snapshot") @db.JsonB
+  answers     Json?     @db.JsonB
+  score       Int?
+  totalPoints Int?      @map("total_points")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  submittedAt DateTime? @map("submitted_at")
+
+  topic   Topic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  student QuizTaker @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, startedAt])
+  @@index([topicId, startedAt])
+  @@map("study_attempts")
 }
 
 // =============================================
@@ -494,6 +534,7 @@ model QuizTaker {
   quizHistory        QuizTakenHistory[]
   gameSessions       GameSession[]
   attendanceRecords  AttendanceRecord[]
+  studyAttempts      StudyAttempt[]
 
   @@index([email, accountType])
   @@index([department])

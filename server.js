@@ -57,6 +57,7 @@ app.use('/api/attendance/admin/schedules', require('./routes/schedules'));
 app.use('/api/quiztaker', require('./routes/quiztaker'));
 app.use('/api/quiz', require('./routes/quiz'));
 app.use('/api/questionset', require('./routes/questionset'));
+app.use('/api/study-hub', require('./routes/study-hub'));
 // NEW: Public routes for regular students (no authentication required)
 app.use('/api/public/quiz', require('./routes/public.js'));
 app.use('/api/public-exams', require('./routes/public-exams'));

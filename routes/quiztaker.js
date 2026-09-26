@@ -1096,4 +1096,46 @@ router.get("/my-submissions", verifyQuizTaker, async (req, res) => {
   }
 });
 
+// A single student-facing history for assigned mocks, CBT practice, and study tests.
+router.get('/analytics', verifyQuizTaker, async (req, res) => {
+  try {
+    const [quizzes, cbt, study] = await Promise.all([
+      prisma.quizTakenHistory.findMany({ where: { quizTakerId: req.quizTaker.id },
+        select: { id: true, score: true, totalPoints: true, percentage: true, completedAt: true,
+          quiz: { select: { title: true, examType: true } } } }),
+      prisma.cbtSubmission.findMany({ where: { quizTakerId: req.quizTaker.id, submittedAt: { not: null } },
+        select: { id: true, score: true, totalPoints: true, percentage: true, submittedAt: true,
+          questionSets: { select: { title: true } } } }),
+      prisma.studyAttempt.findMany({ where: { studentId: req.quizTaker.id, submittedAt: { not: null } },
+        select: { id: true, score: true, totalPoints: true, submittedAt: true,
+          topic: { select: { id: true, name: true, questionSet: { select: { title: true } } } } } }),
+    ]);
+    const results = [
+      ...quizzes.map((entry) => ({ id: entry.id, type: 'mock', examType: entry.examType, title: entry.quiz?.title || 'Mock exam',
+        score: entry.score, totalPoints: entry.totalPoints, percentage: Number(entry.percentage), completedAt: entry.completedAt })),
+      ...cbt.map((entry) => ({ id: entry.id, type: 'cbt', title: entry.questionSets.length === 1 ? `${entry.questionSets[0].title} CBT` : 'CBT mock',
+        score: entry.score, totalPoints: entry.totalPoints, percentage: Number(entry.percentage), completedAt: entry.submittedAt })),
+      ...study.map((entry) => ({ id: entry.id, type: 'study', title: `${entry.topic.questionSet.title} · ${entry.topic.name}`,
+        score: entry.score, totalPoints: entry.totalPoints, percentage: entry.totalPoints ? Math.round(entry.score / entry.totalPoints * 10000) / 100 : 0,
+        completedAt: entry.submittedAt })),
+    ].sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+    const total = results.length;
+    const byTopic = new Map();
+    for (const entry of study) {
+      const current = byTopic.get(entry.topic.id) || { id: entry.topic.id, title: `${entry.topic.questionSet.title} · ${entry.topic.name}`, total: 0, attempts: 0 };
+      current.total += entry.totalPoints ? entry.score / entry.totalPoints * 100 : 0;
+      current.attempts++;
+      byTopic.set(entry.topic.id, current);
+    }
+    const focus = [...byTopic.values()].sort((a, b) => a.total / a.attempts - b.total / b.attempts)[0];
+    res.json({ success: true, results, summary: { total, averagePercentage: total ? Math.round(results.reduce((sum, item) => sum + item.percentage, 0) / total) : 0,
+      bestPercentage: total ? Math.max(...results.map((item) => item.percentage)) : 0,
+      counts: { mock: quizzes.length, cbt: cbt.length, study: study.length },
+      focusTopic: focus ? { id: focus.id, title: focus.title, averagePercentage: Math.round(focus.total / focus.attempts), attempts: focus.attempts } : null } });
+  } catch (error) {
+    console.error('Student analytics error:', error);
+    res.status(500).json({ success: false, message: 'Unable to load student analytics' });
+  }
+});
+
 module.exports = router;
