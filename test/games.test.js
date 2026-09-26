@@ -137,3 +137,26 @@ test('invalid options are rejected, quit is terminal, and starting resumes activ
   await call('post', '/sessions/:id/answer', { questionId, answer: '4' });
   assert.equal(histories.length, 0);
 });
+
+test('leaderboard includes the viewer outside the display limit and metrics from the best round', () => {
+  const now = new Date('2026-09-29T12:00:00Z');
+  const rows = Array.from({ length: 14 }, (_, i) => ({
+    userId: `player-${i}`, gameType: 'sudden-death', currentScore: 140 - i * 10,
+    status: 'completed', completedAt: now, questionsAnswered: 20, correctAnswers: 14 - i,
+    duration: i === 13 ? null : 100, user: { name: `Scholar ${i}`, department: 'Sciences' },
+  }));
+  const board = buildLeaderboard(rows, 3, now, 'player-13');
+  assert.equal(board.games['sudden-death'].length, 3);
+  assert.equal(board.totalPlayers['sudden-death'], 14);
+  assert.equal(board.totalPlayers.overall, 14);
+  assert.equal(board.viewer.games['sudden-death'].rank, 14);
+  assert.equal(board.viewer.overall.rank, 14);
+  assert.equal(board.viewer.games['sudden-death'].averageSeconds, null);
+  assert.equal(board.games['sudden-death'][0].accuracy, 70);
+  assert.equal(board.games['sudden-death'][0].averageSeconds, 5);
+  assert.equal(board.games['sudden-death'][0].department, 'Sciences');
+  const unranked = buildLeaderboard([], 25, now, 'new-student');
+  assert.equal(unranked.viewer.overall, null);
+  assert.equal(unranked.viewer.games['time-attack'], null);
+  assert.equal(unranked.totalPlayers.overall, 0);
+});

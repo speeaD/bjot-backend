@@ -26,7 +26,7 @@ function scoreAnswer(session, correct, wager) {
   return { currentScore, status, change };
 }
 
-function buildLeaderboard(sessions, limit = 25, now = new Date()) {
+function buildLeaderboard(sessions, limit = 25, now = new Date(), viewerId = null) {
   const week = weeklyWindow(now);
   const best = new Map();
   for (const session of sessions) {
@@ -41,10 +41,14 @@ function buildLeaderboard(sessions, limit = 25, now = new Date()) {
   const overallByUser = new Map();
   for (const session of best.values()) {
     const displayName = session.user.name?.trim() || 'BJOT Scholar';
-    games[session.gameType].push({ userId: session.userId, displayName, score: session.currentScore, achievedAt: session.completedAt.toISOString() });
+    games[session.gameType].push({ userId: session.userId, displayName, department: session.user.department || null,
+      score: session.currentScore, achievedAt: session.completedAt.toISOString(),
+      correctAnswers: session.correctAnswers ?? null, questionsAnswered: session.questionsAnswered,
+      accuracy: Number.isInteger(session.correctAnswers) ? Math.round(session.correctAnswers / session.questionsAnswered * 1000) / 10 : null,
+      averageSeconds: session.duration != null ? Math.round(session.duration / session.questionsAnswered * 10) / 10 : null });
     let entry = overallByUser.get(session.userId);
     if (!entry) {
-      entry = { userId: session.userId, displayName, totalScore: 0, gamesPlayed: 0, breakdown: Object.fromEntries(GAME_IDS.map(id => [id, 0])), achievedAt: '' };
+      entry = { userId: session.userId, displayName, department: session.user.department || null, totalScore: 0, gamesPlayed: 0, breakdown: Object.fromEntries(GAME_IDS.map(id => [id, 0])), achievedAt: '' };
       overallByUser.set(session.userId, entry);
     }
     entry.breakdown[session.gameType] = session.currentScore;
@@ -53,9 +57,14 @@ function buildLeaderboard(sessions, limit = 25, now = new Date()) {
     entry.achievedAt = [entry.achievedAt, session.completedAt.toISOString()].sort().at(-1);
   }
   const rank = (entries, score) => entries.sort((a, b) => b[score] - a[score] || a.achievedAt.localeCompare(b.achievedAt) || a.userId.localeCompare(b.userId))
-    .slice(0, limit).map((entry, index) => ({ ...entry, rank: index + 1 }));
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
   for (const id of GAME_IDS) games[id] = rank(games[id], 'score');
-  return { games, overall: rank([...overallByUser.values()], 'totalScore'), week: { startsAt: week.start.toISOString(), endsAt: week.end.toISOString(), timeZone: week.timeZone }, generatedAt: now.toISOString() };
+  const overall = rank([...overallByUser.values()], 'totalScore');
+  const totalPlayers = { overall: overall.length, ...Object.fromEntries(GAME_IDS.map(id => [id, games[id].length])) };
+  const viewer = { userId: viewerId, overall: overall.find(entry => entry.userId === viewerId) || null,
+    games: Object.fromEntries(GAME_IDS.map(id => [id, games[id].find(entry => entry.userId === viewerId) || null])) };
+  for (const id of GAME_IDS) games[id] = games[id].slice(0, limit);
+  return { games, overall: overall.slice(0, limit), totalPlayers, viewer, week: { startsAt: week.start.toISOString(), endsAt: week.end.toISOString(), timeZone: week.timeZone }, generatedAt: now.toISOString() };
 }
 
 module.exports = { GAME_IDS, TIME_ATTACK_SECONDS, weeklyWindow, scoreAnswer, buildLeaderboard };

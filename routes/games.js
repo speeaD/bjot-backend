@@ -153,9 +153,9 @@ router.get('/leaderboard', handle(async (req, res) => {
   const sessions = await prisma.gameSession.findMany({
     where: { gameType: { in: GAME_IDS }, status: { in: ['won', 'lost', 'completed'] },
       completedAt: { gte: start, lt: end }, questionsAnswered: { gt: 0 }, user: { isActive: true } },
-    select: { userId: true, gameType: true, currentScore: true, status: true, questionsAnswered: true, completedAt: true, user: { select: { name: true } } },
+    select: { userId: true, gameType: true, currentScore: true, status: true, questionsAnswered: true, correctAnswers: true, duration: true, completedAt: true, user: { select: { name: true, department: true } } },
   });
-  res.set('Cache-Control', 'no-store').json(buildLeaderboard(sessions, limit, now));
+  res.set('Cache-Control', 'no-store').json(buildLeaderboard(sessions, limit, now, req.quizTaker.id));
 }));
 
 module.exports = router;

@@ -45,6 +45,7 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
       success: true,
       quizTaker: {
         id: quizTaker.id,
+        name: quizTaker.name,
         email: quizTaker.email,
         accessCode: quizTaker.accessCode,
         assignedQuizzes: quizTaker.assignedQuizzes,
