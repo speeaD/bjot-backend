@@ -63,7 +63,7 @@ app.use('/api/public/quiz', require('./routes/public.js'));
 app.use('/api/public-exams', require('./routes/public-exams'));
 app.use('/api/public/content', require('./routes/landing-content-public'));
 app.use('/api/cbt', require('./routes/cbt.js'));
-app.use('/api/games/scholarswager', require('./routes/scholarswager.js'));
+app.use('/api/games', require('./routes/games'));
 
 // Test route to verify server is working
 app.get('/', (req, res) => {
