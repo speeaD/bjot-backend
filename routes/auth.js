@@ -237,10 +237,12 @@ router.post('/quiztaker/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please provide all required fields' });
     }
 
-    if (!Array.isArray(questionSetCombination) || questionSetCombination.length !== 4) {
+    if (!Array.isArray(questionSetCombination) || questionSetCombination.length !== 4 ||
+        !questionSetCombination.every((id) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) ||
+        new Set(questionSetCombination).size !== 4) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide a valid question set combination (array of 4 question set IDs)',
+        message: 'Please select English plus exactly three other subjects',
       });
     }
 
@@ -252,13 +254,17 @@ router.post('/quiztaker/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Quiz taker with this email already exists' });
     }
 
-    const questionSetCount = await prisma.questionSet.count({
-      where: { id: { in: questionSetCombination } },
+    const questionSets = await prisma.questionSet.findMany({
+      where: { id: { in: questionSetCombination }, isActive: true },
+      select: { id: true, title: true },
     });
-    if (questionSetCount !== 4 || new Set(questionSetCombination).size !== 4) {
+    const englishCount = questionSets.filter((subject) =>
+      /^(?:use of english|english(?: language)?)$/.test(subject.title.trim().toLowerCase().replace(/\s+/g, ' '))
+    ).length;
+    if (questionSets.length !== 4 || englishCount !== 1) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide a valid question set combination (array of 4 question set IDs)',
+        message: 'Please select compulsory English plus exactly three other active subjects',
       });
     }
 
