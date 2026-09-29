@@ -932,7 +932,7 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
           include: {
             questionSets: {
               include: {
-                questions: true
+                questions: { include: { originalQuestion: { select: { metadata: true } } } }
               },
               orderBy: {
                 orderNum: 'asc'
@@ -1011,7 +1011,8 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
               question: question.question,
               type: submittedAnswer.questionType,
               yourAnswer: submittedAnswer.answer,
-              correctAnswer: question.correctAnswer,
+              correctAnswer: String(question.correctAnswer ?? ''),
+              explanation: typeof question.originalQuestion?.metadata?.explanation === 'string' ? question.originalQuestion.metadata.explanation : '',
               isCorrect: submittedAnswer.isCorrect,
               pointsAwarded: submittedAnswer.pointsAwarded,
               pointsPossible: submittedAnswer.pointsPossible,
@@ -1023,7 +1024,8 @@ router.get("/submission/:submissionId", verifyQuizTaker, async (req, res) => {
               question: question.question,
               type: question.type,
               yourAnswer: null,
-              correctAnswer: question.correctAnswer,
+              correctAnswer: String(question.correctAnswer ?? ''),
+              explanation: typeof question.originalQuestion?.metadata?.explanation === 'string' ? question.originalQuestion.metadata.explanation : '',
               isCorrect: false,
               pointsAwarded: 0,
               pointsPossible: question.points,

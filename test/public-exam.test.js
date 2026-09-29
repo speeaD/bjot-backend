@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { gradeQuestions, publicQuestion, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
+const { gradeQuestions, publicQuestion, reviewQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
 
 const questions = [
   { id: 'q1', type: 'multiple-choice', question: 'Pick B', options: ['A. wrong', 'B. right'], correctAnswer: 'B', points: 2, orderNum: 1 },
@@ -22,6 +22,15 @@ test('server grading handles the current question formats', () => {
     { questionId: 'q3', answer: ' physics ' },
   ]), { score: 6, totalPoints: 6, percentage: 100 });
   assert.deepEqual(gradeQuestions(questions, [{ questionId: 'q1', answer: 'A. wrong' }]), { score: 0, totalPoints: 6, percentage: 0 });
+});
+
+test('review reveals corrections and explanations only in the graded response', () => {
+  const explained = { ...questions[0], metadata: { explanation: 'B is the matching option.' } };
+  assert.deepEqual(reviewQuestions([explained], [{ questionId: 'q1', answer: 'A. wrong' }]), [{
+    questionId: 'q1', question: 'Pick B', yourAnswer: 'A. wrong', correctAnswer: 'B. right',
+    isCorrect: false, explanation: 'B is the matching option.',
+  }]);
+  assert.equal('explanation' in publicQuestion(explained), false);
 });
 
 test('rejects duplicate or foreign answers', () => {

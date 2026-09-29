@@ -2,7 +2,7 @@ const express = require('express');
 const { randomInt } = require('node:crypto');
 const prisma = require('../utils/database');
 const { verifyAdmin, verifyQuizTaker } = require('../middleware/auth');
-const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers } = require('../utils/public-exam');
+const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers } = require('../utils/public-exam');
 
 const router = express.Router();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,7 +126,7 @@ router.post('/topics/:id/start', async (req, res) => {
     const published = await prisma.studyMaterial.count({ where: { topicId: topic.id, isPublished: true } });
     if (!published) return res.status(409).json({ success: false, message: 'This topic needs published study materials before a test can start' });
     const questions = await prisma.question.findMany({ where: { topicId: topic.id, ...eligibleQuestions },
-      select: { id: true, type: true, question: true, passage: true, diagram: true, diagramAlt: true, options: true, correctAnswer: true, points: true, orderNum: true } });
+      select: { id: true, type: true, question: true, passage: true, diagram: true, diagramAlt: true, options: true, correctAnswer: true, points: true, orderNum: true, metadata: true } });
     if (questions.length < 30) return res.status(409).json({ success: false, message: 'This topic needs at least 30 eligible questions before a test can start' });
     const count = Math.min(40, questions.length);
     for (let i = 0; i < count; i++) {
@@ -145,7 +145,8 @@ router.get('/attempts/:id', async (req, res) => {
     if (!UUID.test(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid attempt ID' });
     const attempt = await prisma.studyAttempt.findFirst({ where: { id: req.params.id, studentId: req.quizTaker.id }, include: { topic: { select: { name: true, questionSet: { select: { title: true } } } } } });
     if (!attempt) return res.status(404).json({ success: false, message: 'Attempt not found' });
-    if (attempt.submittedAt) return res.json({ success: true, attempt: { id: attempt.id, submittedAt: attempt.submittedAt, score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.totalPoints ? Math.round(attempt.score / attempt.totalPoints * 10000) / 100 : 0 } });
+    if (attempt.submittedAt) return res.json({ success: true, attempt: { id: attempt.id, submittedAt: attempt.submittedAt, score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.totalPoints ? Math.round(attempt.score / attempt.totalPoints * 10000) / 100 : 0,
+      review: reviewQuestions(attempt.questionSnapshot, attempt.answers || []) } });
     res.json({ success: true, attempt: { id: attempt.id, topic: attempt.topic.name, subject: attempt.topic.questionSet.title,
       startedAt: attempt.startedAt, questions: attempt.questionSnapshot.map(publicQuestion) } });
   } catch (error) { failure(res, error); }
@@ -162,7 +163,7 @@ router.post('/attempts/:id/submit', async (req, res) => {
     const saved = await prisma.studyAttempt.updateMany({ where: { id: attempt.id, studentId: req.quizTaker.id, submittedAt: null },
       data: { answers: req.body.answers, score: result.score, totalPoints: result.totalPoints, submittedAt: new Date() } });
     if (!saved.count) return res.status(409).json({ success: false, message: 'This attempt has already been submitted' });
-    res.json({ success: true, result });
+    res.json({ success: true, result: { ...result, review: reviewQuestions(attempt.questionSnapshot, req.body.answers) } });
   } catch (error) { failure(res, error); }
 });
 

@@ -48,6 +48,27 @@ function gradeQuestions(questions, answers) {
   return { score, totalPoints, percentage: totalPoints ? Math.round(score / totalPoints * 10000) / 100 : 0 };
 }
 
+function reviewQuestions(questions, answers) {
+  const answerMap = new Map(answers.map(({ questionId, answer }) => [questionId, answer]));
+  return questions.map((question) => {
+    const yourAnswer = answerMap.get(question.id) ?? '';
+    const options = optionsFor(question);
+    const expected = question.correctAnswer;
+    const letter = normalized(expected);
+    const correctAnswer = question.type === 'multiple-choice' && /^[a-z]$/.test(letter)
+      ? options[letter.charCodeAt(0) - 97] ?? String(expected)
+      : String(expected ?? '');
+    return {
+      questionId: question.id,
+      question: question.question,
+      yourAnswer,
+      correctAnswer,
+      isCorrect: isCorrect(question, yourAnswer),
+      explanation: typeof question.metadata?.explanation === 'string' ? question.metadata.explanation : '',
+    };
+  });
+}
+
 function validateAnswers(answers, questionIds) {
   if (!Array.isArray(answers) || answers.length > questionIds.size || answers.length > 500) return false;
   const seen = new Set();
@@ -62,4 +83,4 @@ function selectedTestQuestions(questionIds, availableQuestions) {
   return selected.some((question) => !question) ? null : selected;
 }
 
-module.exports = { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers, selectedTestQuestions };
+module.exports = { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers, selectedTestQuestions };

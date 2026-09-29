@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/database');
-const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
+const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -85,7 +85,8 @@ router.post('/mock/sessions/:id/submit', async (req, res) => {
     const grade = await prisma.publicMockGrade.upsert({ where: { quizId_email: { quizId: session.quizId, email: session.email } },
       create: { quizId: session.quizId, email: session.email, attemptId: attempt.id,
         score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.percentage }, update: {} });
-    res.json({ success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id });
+    res.json({ success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id,
+      review: reviewQuestions(questions, attempt.answers) });
   } catch (error) { sendError(res, error); }
 });
 
@@ -129,7 +130,7 @@ router.post('/topic/submit', async (req, res) => {
     if (!topic || !topic.questions.length) return res.status(404).json({ success: false, message: 'Topic test is unavailable' });
     const ids = new Set(topic.questions.map((question) => question.id));
     if (!validateAnswers(req.body?.answers, ids)) return res.status(400).json({ success: false, message: 'Answers contain invalid question IDs or values' });
-    res.json({ success: true, result: gradeQuestions(topic.questions, req.body.answers) });
+    res.json({ success: true, result: gradeQuestions(topic.questions, req.body.answers), review: reviewQuestions(topic.questions, req.body.answers) });
   } catch (error) { sendError(res, error); }
 });
 

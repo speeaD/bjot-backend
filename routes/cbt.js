@@ -2,7 +2,7 @@ const express = require('express');
 const { randomInt } = require('node:crypto');
 const prisma = require('../utils/database');
 const { verifyQuizTaker } = require('../middleware/auth');
-const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, validateAnswers } = require('../utils/public-exam');
+const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers } = require('../utils/public-exam');
 
 const router = express.Router();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,7 +126,10 @@ function submit(singleSubject) {
       // count this attempt twice.
       return saved;
     });
-    res.json({ success: true, submission: result(submission) });
+    const savedAnswers = await prisma.cbtAnswer.findMany({ where: { cbtSubmissionId: submission.id }, include: { question: true } });
+    const available = savedAnswers.filter((row) => row.question);
+    res.json({ success: true, submission: { ...result(submission),
+      review: reviewQuestions(available.map((row) => row.question), available.map((row) => ({ questionId: row.questionId, answer: row.answer || '' }))) } });
   });
 }
 router.post('/submit', submit(false));
