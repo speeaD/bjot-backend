@@ -37,8 +37,13 @@ router.get('/question-sets', async (_req, res) => {
     const sets = await prisma.questionSet.findMany({ where: { id: { in: ids }, isActive: true }, select: { id: true, title: true } });
     const byId = new Map(sets.map((set) => [set.id, set]));
     const setStats = new Map(quizzes.flatMap((quiz) => quiz.questionSets.map((set) => [set.questionSetId, { questionCount: set.questions.length, totalPoints: set.totalPoints }])));
+    const available = quizzes.filter((quiz) => quiz.questionSets.every((set) => byId.has(set.questionSetId)));
     res.json({ success: true, questionSets: ids.filter((id) => byId.has(id)).map((id) => ({ _id: id, title: byId.get(id).title, ...setStats.get(id) })),
-      availableCombinations: quizzes.map((quiz) => quiz.questionSets.map((set) => set.questionSetId)).filter((combo) => combo.every((id) => byId.has(id))) });
+      availableCombinations: available.map((quiz) => quiz.questionSets.map((set) => set.questionSetId)),
+      mocks: available.map((quiz) => ({ id: quiz.id, title: quiz.title,
+        questionSetIds: quiz.questionSets.map((set) => set.questionSetId),
+        questionCount: quiz.questionSets.reduce((sum, set) => sum + set.questions.length, 0),
+        durationSeconds: quiz.durationHours * 3600 + quiz.durationMinutes * 60 + quiz.durationSeconds })) });
   } catch (error) { sendError(res, error); }
 });
 
@@ -51,9 +56,12 @@ router.post('/mock/sessions', async (req, res) => {
     if (!name || name.length > 255 || !EMAIL.test(email) || email.length > 255 || !Array.isArray(ids) || ids.length !== 4 || new Set(ids).size !== 4 || !ids.every((id) => typeof id === 'string' && UUID.test(id))) {
       return res.status(400).json({ success: false, message: 'Enter your name, a valid email, and four different subjects' });
     }
+    if (body.quizId !== undefined && (typeof body.quizId !== 'string' || !UUID.test(body.quizId))) {
+      return res.status(400).json({ success: false, message: 'Choose a valid free mock' });
+    }
     const quizzes = await findOpenQuizzes();
     const key = [...ids].sort().join(',');
-    const quiz = quizzes.find((item) => item.questionSets.map((set) => set.questionSetId).sort().join(',') === key);
+    const quiz = quizzes.find((item) => (!body.quizId || item.id === body.quizId) && item.questionSets.map((set) => set.questionSetId).sort().join(',') === key);
     if (!quiz) return res.status(404).json({ success: false, message: 'No free mock is available for this subject combination' });
     const activeSets = await prisma.questionSet.count({ where: { id: { in: ids }, isActive: true } });
     if (activeSets !== 4) return res.status(404).json({ success: false, message: 'One or more subjects are unavailable' });
