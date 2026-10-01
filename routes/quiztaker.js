@@ -2,6 +2,31 @@ const express = require("express");
 const router = express.Router();
 const { verifyQuizTaker } = require("../middleware/auth");
 const prisma = require('../utils/database');
+const { calculateStreak } = require('../utils/streak');
+
+// One qualifying activity per Lagos calendar day counts toward the streak.
+router.get('/streak', verifyQuizTaker, async (req, res) => {
+  try {
+    const studentId = req.quizTaker.id;
+    const [attendance, quizzes, cbt, study, games] = await Promise.all([
+      prisma.attendanceRecord.findMany({ where: { studentId, status: 'present' }, select: { markedAt: true } }),
+      prisma.quizTakenHistory.findMany({ where: { quizTakerId: studentId }, select: { completedAt: true } }),
+      prisma.cbtSubmission.findMany({ where: { quizTakerId: studentId, submittedAt: { not: null } }, select: { submittedAt: true } }),
+      prisma.studyAttempt.findMany({ where: { studentId, submittedAt: { not: null } }, select: { submittedAt: true } }),
+      prisma.gameSession.findMany({ where: { userId: studentId, status: { in: ['won', 'lost', 'completed'] },
+        questionsAnswered: { gt: 0 }, completedAt: { not: null } }, select: { completedAt: true } }),
+    ]);
+    const timestamps = [
+      ...attendance.map((item) => item.markedAt), ...quizzes.map((item) => item.completedAt),
+      ...cbt.map((item) => item.submittedAt), ...study.map((item) => item.submittedAt),
+      ...games.map((item) => item.completedAt),
+    ];
+    res.set('Cache-Control', 'no-store').json({ success: true, streak: calculateStreak(timestamps) });
+  } catch (error) {
+    console.error('Student streak error:', error);
+    res.status(500).json({ success: false, message: 'Unable to load learning streak' });
+  }
+});
 
 // @route   GET /api/quiztaker/dashboard
 // @desc    Get quiz taker dashboard data
