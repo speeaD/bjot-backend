@@ -45,10 +45,10 @@ const router = require('../routes/cbt');
 const { verifyQuizTaker } = require('../middleware/auth');
 
 test.beforeEach(() => { session = null; available = sets; queries = []; history = []; });
-async function call(method, path, body = {}, params = {}, owner = studentId) {
+async function call(method, path, body = {}, params = {}, owner = studentId, accountType = 'premium') {
   const route = router.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]);
   const response = { statusCode: 200, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
-  await route.route.stack.at(-1).handle({ body, params, quizTaker: { id: owner } }, response);
+  await route.route.stack.at(-1).handle({ body, params, quizTaker: { id: owner, accountType } }, response);
   return response;
 }
 const startSingle = () => call('post', '/start-single-subject', { questionSetId: sets[1].id });
@@ -97,6 +97,18 @@ test('subject CBT selects up to 40 questions and rejects empty or duplicate subj
   available = [{ ...sets[1], questions: [] }];
   assert.equal((await startSingle()).statusCode, 400);
   assert.equal((await call('post', '/start-session', { questionSetIds: Array(4).fill(sets[0].id) })).statusCode, 400);
+});
+
+test('regular CBT uses the same first ten questions per subject and blocks subject tests', async () => {
+  const ids = sets.map((set) => set.id);
+  const first = await call('post', '/start-session', { questionSetIds: ids }, {}, studentId, 'regular');
+  const firstIds = first.body.session.questionsBySet[ids[0]].map((question) => question._id);
+  assert.equal(firstIds.length, 10);
+  assert.deepEqual(firstIds, sets[0].questions.slice(0, 10).map((question) => question.id));
+  const second = await call('post', '/start-session', { questionSetIds: ids }, {}, studentId, 'regular');
+  assert.deepEqual(second.body.session.questionsBySet[ids[0]].map((question) => question._id), firstIds);
+  const blocked = await call('post', '/start-single-subject', { questionSetId: ids[0] }, {}, studentId, 'regular');
+  assert.equal(blocked.statusCode, 403);
 });
 
 test('grading counts only the saved paper, includes unanswered questions, and retries once', async () => {

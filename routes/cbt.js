@@ -39,23 +39,27 @@ function sample(questions, limit) {
 
 router.use(verifyQuizTaker);
 
-router.get('/question-sets', handle(async (_req, res) => {
+router.get('/question-sets', handle(async (req, res) => {
   const sets = await prisma.questionSet.findMany({ where: { isActive: true }, orderBy: { title: 'asc' },
-    include: { questions: { where: eligible, select: { points: true } } } });
-  const questionSets = sets.filter((set) => set.questions.length).map(summary);
-  res.json({ success: true, count: questionSets.length, questionSets });
+    include: { questions: { where: eligible, orderBy: [{ orderNum: 'asc' }, { id: 'asc' }], select: { points: true } } } });
+  const regular = req.quizTaker.accountType !== 'premium';
+  const questionSets = sets.filter((set) => set.questions.length).map((set) =>
+    summary({ ...set, questions: regular ? set.questions.slice(0, 10) : set.questions }));
+  res.json({ success: true, count: questionSets.length, questionSets, accountType: req.quizTaker.accountType });
 }));
 
 router.get('/question-set/:id/questions', handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid subject');
   const set = await prisma.questionSet.findFirst({ where: { id: req.params.id, isActive: true },
-    include: { questions: { where: eligible, orderBy: { orderNum: 'asc' } } } });
+    include: { questions: { where: eligible, orderBy: [{ orderNum: 'asc' }, { id: 'asc' }] } } });
   if (!set || !set.questions.length) fail(404, 'This subject has no available questions');
-  res.json({ success: true, questionSet: { ...summary(set), questions: set.questions.map(publicQuestion) } });
+  const questions = req.quizTaker.accountType === 'premium' ? set.questions : set.questions.slice(0, 10);
+  res.json({ success: true, questionSet: { ...summary({ ...set, questions }), questions: questions.map(publicQuestion) } });
 }));
 
 function start(singleSubject) {
   return handle(async (req, res) => {
+    if (singleSubject && req.quizTaker.accountType !== 'premium') fail(403, 'Subscribe to the premium class to access Subject Tests');
     const ids = singleSubject ? [req.body?.questionSetId] : req.body?.questionSetIds;
     const count = singleSubject ? 1 : 4;
     if (!Array.isArray(ids) || ids.length !== count || new Set(ids).size !== count ||
@@ -67,8 +71,11 @@ function start(singleSubject) {
     if (sets.length !== count) fail(400, 'One or more selected subjects are unavailable');
     const selected = ids.map((id) => sets.find((set) => set.id === id)).map((set) => {
       if (!set.questions.length) fail(400, `${set.title} has no available questions`);
-      const limit = !singleSubject && set.title.toLowerCase().includes('english') ? 60 : 40;
-      return { ...set, questions: sample(set.questions, limit) };
+      const regular = req.quizTaker.accountType !== 'premium';
+      const limit = regular ? 10 : !singleSubject && set.title.toLowerCase().includes('english') ? 60 : 40;
+      return { ...set, questions: regular
+        ? [...set.questions].sort((a, b) => a.orderNum - b.orderNum || a.id.localeCompare(b.id)).slice(0, limit)
+        : sample(set.questions, limit) };
     });
     // Persist the sampled IDs before returning questions. Unanswered questions
     // remain part of the denominator, and the client cannot choose its own paper.
@@ -93,6 +100,7 @@ router.post('/start-single-subject', start(true));
 
 function submit(singleSubject) {
   return handle(async (req, res) => {
+    if (singleSubject && req.quizTaker.accountType !== 'premium') fail(403, 'Subscribe to the premium class to access Subject Tests');
     const sessionId = req.body?.sessionId;
     if (typeof sessionId !== 'string' || !UUID.test(sessionId)) fail(400, 'Invalid exam session');
     const submission = await prisma.$transaction(async (db) => {

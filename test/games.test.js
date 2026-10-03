@@ -71,7 +71,7 @@ const router = require('../routes/games');
 async function call(method, path, body, id = userId) {
   const route = router.stack.find(layer => layer.route?.path === path && layer.route.methods[method]);
   const res = { statusCode: 200, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
-  await route.route.stack.at(-1).handle({ params: { id: sessionId }, body, quizTaker: { id }, query: {} }, res);
+  await route.route.stack.at(-1).handle({ params: { id: sessionId }, body, quizTaker: { id, accountType: 'premium' }, query: {} }, res);
   return res;
 }
 

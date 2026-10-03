@@ -158,23 +158,18 @@ router.post('/admin/register', async (req, res) => {
 // @access  Public
 router.post('/quiztaker/login', async (req, res) => {
   try {
-    const { email } = req.body;
+    const accessCode = typeof req.body?.accessCode === 'string' ? req.body.accessCode.trim().toUpperCase() : '';
 
     // Validation
-    if (!email) {
+    if (!accessCode) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Please provide a valid email address' 
+        message: 'Please provide your access code'
       });
     }
 
-    // Check if quiz taker exists
-    // Changed from: QuizTaker.findOne({ email: email.trim() })
-    const quizTaker = await prisma.quizTaker.findFirst({
-      where: { 
-        email: email.trim()
-      }
-    });
+    // Look up the code directly; email addresses cannot authenticate students.
+    const quizTaker = await prisma.quizTaker.findUnique({ where: { accessCode } });
 
     if (!quizTaker) {
       return res.status(401).json({ 
@@ -201,7 +196,7 @@ router.post('/quiztaker/login', async (req, res) => {
       quizTaker: {
         id: quizTaker.id,
         email: quizTaker.email,
-        accessCode: quizTaker.accessCode,
+        accountType: quizTaker.accountType,
       },
     });
   } catch (error) {

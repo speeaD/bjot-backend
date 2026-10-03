@@ -13,6 +13,10 @@ const handle = fn => async (req, res) => {
     res.status(error.status || 500).json({ message: error.status ? error.message : 'Unable to complete game request. Please try again.' });
   }
 };
+function lagosDayStart(now = new Date()) {
+  const local = new Date(now.getTime() + 60 * 60 * 1000);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - 60 * 60 * 1000);
+}
 
 router.use(verifyQuizTaker);
 
@@ -81,6 +85,7 @@ router.get('/subjects', handle(async (_req, res) => {
 router.post('/start', handle(async (req, res) => {
   const { gameType, questionSetId } = req.body || {};
   if (!GAME_IDS.includes(gameType) || !UUID.test(questionSetId || '')) fail(400, 'Choose a valid game and subject');
+  if (req.quizTaker.accountType !== 'premium' && gameType !== 'scholars-wager') fail(403, 'Subscribe to the premium class to play this game');
   const subject = await prisma.questionSet.findFirst({ where: { id: questionSetId, isActive: true, questions: { some: eligible } } });
   if (!subject) fail(404, 'This subject has no available multiple-choice questions');
   await finishExpired();
@@ -89,6 +94,12 @@ router.post('/start', handle(async (req, res) => {
     await db.$queryRaw`SELECT id FROM quiz_takers WHERE id = ${req.quizTaker.id}::uuid FOR UPDATE`;
     let session = await db.gameSession.findFirst({ where: { userId: req.quizTaker.id, gameType, status: 'active' }, orderBy: { startedAt: 'desc' } });
     const resumed = !!session;
+    if (!session && req.quizTaker.accountType !== 'premium' && gameType === 'scholars-wager') {
+      const playedToday = await db.gameSession.findFirst({ where: {
+        userId: req.quizTaker.id, gameType, startedAt: { gte: lagosDayStart() },
+      } });
+      if (playedToday) fail(403, 'Regular students can play Scholar’s Wager once per day. Subscribe to the premium class for more rounds.');
+    }
     if (!session) session = await db.gameSession.create({ data: {
       userId: req.quizTaker.id, gameType, questionSetId, subject: subject.title,
       currentScore: gameType === 'scholars-wager' ? 100 : 0, goalScore: 1000,
@@ -99,11 +110,15 @@ router.post('/start', handle(async (req, res) => {
 }));
 
 router.get('/sessions/:id', handle(async (req, res) => {
-  res.json(await withSession(req, (db, session) => payload(db, session)));
+  res.json(await withSession(req, (db, session) => {
+    if (req.quizTaker.accountType !== 'premium' && session.gameType !== 'scholars-wager') fail(403, 'Subscribe to the premium class to play this game');
+    return payload(db, session);
+  }));
 }));
 
 router.post('/sessions/:id/answer', handle(async (req, res) => {
   const result = await withSession(req, async (db, session) => {
+    if (req.quizTaker.accountType !== 'premium' && session.gameType !== 'scholars-wager') fail(403, 'Subscribe to the premium class to play this game');
     const deadline = expiresAt(session);
     if (session.status !== 'active' || (deadline && deadline <= new Date())) return payload(db, session);
     const question = await nextQuestion(db, session);

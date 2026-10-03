@@ -4,6 +4,13 @@ const { verifyQuizTaker } = require("../middleware/auth");
 const prisma = require('../utils/database');
 const { calculateStreak } = require('../utils/streak');
 
+router.use(['/quiz', '/submission'], verifyQuizTaker, (req, res, next) => {
+  if (req.quizTaker.accountType !== 'premium') {
+    return res.status(403).json({ success: false, message: 'Subscribe to the premium class to access assigned mocks' });
+  }
+  next();
+});
+
 // One qualifying activity per Lagos calendar day counts toward the streak.
 router.get('/streak', verifyQuizTaker, async (req, res) => {
   try {
@@ -72,8 +79,9 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
         id: quizTaker.id,
         name: quizTaker.name,
         email: quizTaker.email,
+        accountType: quizTaker.accountType,
         accessCode: quizTaker.accessCode,
-        assignedQuizzes: quizTaker.assignedQuizzes,
+        assignedQuizzes: quizTaker.accountType === 'premium' ? quizTaker.assignedQuizzes : [],
         createdAt: quizTaker.createdAt,
       },
     });
