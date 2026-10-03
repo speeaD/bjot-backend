@@ -569,8 +569,8 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
     const { email, name, isActive, questionSetIds, accountType } = req.body;
 
-    if (accountType !== undefined && accountType !== 'premium') {
-      return res.status(400).json({ success: false, message: 'Only upgrades to premium are supported' });
+    if (accountType !== undefined && !['premium', 'regular'].includes(accountType)) {
+      return res.status(400).json({ success: false, message: 'Account type must be premium or regular' });
     }
 
     // Check if quiz taker exists
@@ -623,7 +623,8 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
           ...(email && { email }),
           ...(name !== undefined && { name }),
           ...(isActive !== undefined && { isActive }),
-          ...(accountType === 'premium' && { accountType: 'premium', accessCode }),
+          ...(accountType !== undefined && { accountType }),
+          ...(accountType === 'premium' && { accessCode }),
         },
       });
 
