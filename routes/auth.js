@@ -214,7 +214,6 @@ router.post('/quiztaker/login', async (req, res) => {
 router.post('/quiztaker/register', async (req, res) => {
   try {
     const {
-      accountType,
       firstname,
       lastname,
       email,
@@ -228,7 +227,7 @@ router.post('/quiztaker/register', async (req, res) => {
       lastJambScore,
     } = req.body;
 
-    if (!accountType || !firstname || !lastname || !email || !questionSetCombination) {
+    if (!firstname || !lastname || !email || !questionSetCombination) {
       return res.status(400).json({ success: false, message: 'Please provide all required fields' });
     }
 
@@ -271,11 +270,11 @@ router.post('/quiztaker/register', async (req, res) => {
     const quizTaker = await prisma.$transaction(async (tx) => {
       const created = await tx.quizTaker.create({
         data: {
-          accountType,
+          accountType: 'regular',
           name: `${firstname.trim()} ${lastname.trim()}`,
           email: normalizedEmail,
           accessCode,
-          isActive: false,
+          isActive: true,
           phone: phone ? BigInt(phone) : null,
           parentName: parentName?.trim() || null,
           parentPhone: parentPhone ? BigInt(parentPhone) : null,
@@ -294,7 +293,7 @@ router.post('/quiztaker/register', async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Quiz taker registered successfully',
-      quizTaker: { id: quizTaker.id, email: quizTaker.email, accessCode: quizTaker.accessCode },
+      quizTaker: { id: quizTaker.id, email: quizTaker.email, accessCode: quizTaker.accessCode, accountType: quizTaker.accountType },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error', error: error.message });

@@ -567,7 +567,11 @@ router.get("/quiztaker/:id", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
   try {
-    const { email, name, isActive, questionSetIds } = req.body;
+    const { email, name, isActive, questionSetIds, accountType } = req.body;
+
+    if (accountType !== undefined && accountType !== 'premium') {
+      return res.status(400).json({ success: false, message: 'Only upgrades to premium are supported' });
+    }
 
     // Check if quiz taker exists
     // Changed from: QuizTaker.findById(req.params.id)
@@ -602,6 +606,13 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
       }
     }
 
+    let accessCode = existingQuizTaker.accessCode;
+    if (accountType === 'premium' && !accessCode) {
+      do {
+        accessCode = generateAccessCode();
+      } while (await prisma.quizTaker.findUnique({ where: { accessCode } }));
+    }
+
     // Update quiz taker
     // Changed from: QuizTaker.findByIdAndUpdate()
     const quizTaker = await prisma.$transaction(async (tx) => {
@@ -612,6 +623,7 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
           ...(email && { email }),
           ...(name !== undefined && { name }),
           ...(isActive !== undefined && { isActive }),
+          ...(accountType === 'premium' && { accountType: 'premium', accessCode }),
         },
       });
 

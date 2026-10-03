@@ -7,6 +7,7 @@ const subjects = ['Use of English', 'Mathematics', 'Physics', 'Chemistry', 'Biol
 let available;
 let writes;
 let savedCombination;
+let createdData;
 let loginCode;
 const database = {
   quizTaker: { findFirst: async () => null, findUnique: async ({ where }) => {
@@ -22,7 +23,7 @@ const database = {
   $transaction: async (callback) => {
     writes++;
     return callback({
-      quizTaker: { create: async ({ data }) => ({ id: 'student', ...data }) },
+      quizTaker: { create: async ({ data }) => { createdData = data; return { id: 'student', ...data }; } },
       quizTakerQuestionSet: { createMany: async ({ data }) => { savedCombination = data; } },
     });
   },
@@ -33,7 +34,7 @@ const router = require('../routes/auth');
 const register = router.stack.find((layer) => layer.route?.path === '/quiztaker/register').route.stack[0].handle;
 const login = router.stack.find((layer) => layer.route?.path === '/quiztaker/login').route.stack[0].handle;
 
-beforeEach(() => { available = subjects.map((subject) => ({ ...subject })); writes = 0; savedCombination = undefined; loginCode = undefined; });
+beforeEach(() => { available = subjects.map((subject) => ({ ...subject })); writes = 0; savedCombination = undefined; createdData = undefined; loginCode = undefined; });
 
 async function call(ids) {
   const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
@@ -47,6 +48,9 @@ test('registration saves English plus three different subjects', async () => {
   assert.equal((await call(selected)).statusCode, 201);
   assert.equal(writes, 1);
   assert.deepEqual(savedCombination.map((item) => item.questionSetId), selected);
+  assert.equal(createdData.accountType, 'regular');
+  assert.equal(createdData.isActive, true);
+  assert.equal(createdData.accessCode.length, 9);
 });
 
 test('registration rejects invalid combinations without creating an account', async () => {
