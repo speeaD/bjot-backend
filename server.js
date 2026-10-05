@@ -54,6 +54,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content', require('./routes/landing-content-admin'));
 app.use('/api/attendance/admin/schedules', require('./routes/schedules'));
+app.use('/api/attendance/admin', require('./routes/attendance'));
+app.use('/api/attendance/student', require('./routes/attendance-student'));
 app.use('/api/quiztaker', require('./routes/quiztaker'));
 app.use('/api/quiz', require('./routes/quiz'));
 app.use('/api/questionset', require('./routes/questionset'));
