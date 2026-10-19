@@ -189,6 +189,36 @@ router.post('/:id/topics/:topicId/tests', verifyAdmin, async (req, res) => {
   } catch (error) { res.status(500).json({ success: false, message: 'Could not create topic test' }); }
 });
 
+router.post('/:id/topics/:topicId/tests/:testId/questions', verifyAdmin, async (req, res) => {
+  try {
+    const questionIds = req.body?.questionIds;
+    if (!Array.isArray(questionIds) || !questionIds.length || questionIds.length > 500 ||
+      questionIds.some((id) => typeof id !== 'string' || !UUID.test(id)) || new Set(questionIds).size !== questionIds.length) {
+      return res.status(400).json({ success: false, message: 'Select between 1 and 500 different questions' });
+    }
+    const test = await prisma.topicTest.findFirst({ where: {
+      id: req.params.testId, topicId: req.params.topicId,
+      topic: { questionSetId: req.params.id, isActive: true, questionSet: { isActive: true } },
+    } });
+    if (!test) return res.status(404).json({ success: false, message: 'Active topic test not found' });
+    const existing = Array.isArray(test.questionIds) ? test.questionIds : [];
+    if (existing.length + questionIds.length > 500) return res.status(400).json({ success: false, message: 'A topic test can have at most 500 questions' });
+    if (questionIds.some((id) => existing.includes(id))) return res.status(400).json({ success: false, message: 'Some questions are already in this topic test' });
+    const available = await prisma.question.findMany({ where: {
+      id: { in: questionIds }, questionSetId: req.params.id, topicId: req.params.topicId,
+      isArchived: false, type: { in: [...AUTO_GRADED_TYPES] },
+    }, select: { id: true } });
+    if (available.length !== questionIds.length) return res.status(400).json({ success: false, message: 'Some selected questions are unavailable for this topic test' });
+    const result = await prisma.topicTest.updateMany({
+      where: { id: test.id, questionIds: { equals: existing } },
+      data: { questionIds: [...existing, ...questionIds] },
+    });
+    if (!result.count) return res.status(409).json({ success: false, message: 'This topic test changed. Refresh and try again' });
+    const updated = await prisma.topicTest.findUnique({ where: { id: test.id } });
+    res.json({ success: true, test: { ...updated, studentPath: `/topic-test?topicId=${updated.id}` } });
+  } catch (error) { res.status(500).json({ success: false, message: 'Could not add questions to topic test' }); }
+});
+
 router.post('/:id/topics', verifyAdmin, async (req, res) => {
   try {
     const name = req.body.name?.trim();
@@ -207,8 +237,9 @@ router.put('/:id/topics/:topicId', verifyAdmin, async (req, res) => {
   try {
     const topic = await prisma.topic.findFirst({ where: { id: req.params.topicId, questionSetId: req.params.id } });
     if (!topic) return res.status(404).json({ success: false, message: 'Topic not found' });
-    if (req.body.name !== undefined && !String(req.body.name).trim()) return res.status(400).json({ success: false, message: 'Topic name cannot be empty' });
-    const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(req.body.name !== undefined && { name: String(req.body.name).trim() }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
+    const name = req.body.name === undefined ? undefined : typeof req.body.name === 'string' ? req.body.name.trim() : '';
+    if (name !== undefined && (!name || name.length > 255)) return res.status(400).json({ success: false, message: 'Enter a topic name of 255 characters or fewer' });
+    const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(name !== undefined && { name }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
     res.json({ success: true, message: 'Topic updated successfully', topic: { ...updated, studentPath: `/topic-test?topicId=${updated.id}` } });
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });

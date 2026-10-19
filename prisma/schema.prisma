@@ -29,6 +29,7 @@ model Admin {
   questionSets     QuestionSet[]
   quizzes          Quiz[]
   gradedSubmissions QuizSubmission[] @relation("GradedBy")
+  pastPapers      PastPaper[]
 
   // Attendance / schedule relations
   attendanceSessionsCreated AttendanceSession[]      @relation("AttendanceSessionCreatedBy")
@@ -141,6 +142,7 @@ model QuestionSet {
   quizQuestionSets       QuizQuestionSet[]
   quizTakerQuestionSets  QuizTakerQuestionSet[]
   cbtQuestionSets        CbtQuestionSet[]
+  pastPapers             PastPaper[]
   gameSessions           GameSession[]
   attendanceSessions     AttendanceSession[]
   weeklyClassSessions    WeeklyClassSession[]
@@ -535,6 +537,7 @@ model QuizTaker {
   gameSessions       GameSession[]
   attendanceRecords  AttendanceRecord[]
   studyAttempts      StudyAttempt[]
+  pastAttempts       PastAttempt[]
 
   @@index([email, accountType])
   @@index([department])
@@ -790,6 +793,68 @@ model CbtAnswer {
 
   @@index([cbtSubmissionId])
   @@map("cbt_answers")
+}
+
+// Versioned past papers are separate from the general question bank. Attempts
+// snapshot their exact questions, so replacing a paper cannot change a result.
+model PastPaper {
+  id              String         @id @default(uuid()) @db.Uuid
+  sourceExam      String         @default("JAMB") @map("source_exam") @db.VarChar(30)
+  year            Int
+  subjectId       String         @map("subject_id") @db.Uuid
+  subjectTitle    String         @map("subject_title") @db.VarChar(255)
+  version         Int            @default(1)
+  isPublished     Boolean        @default(false) @map("is_published")
+  questionCount   Int            @map("question_count")
+  durationSeconds Int            @map("duration_seconds")
+  createdById     String         @map("created_by_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  questions       PastQuestion[]
+  createdBy       Admin          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  subject         QuestionSet    @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceExam, year, subjectId, version])
+  @@index([sourceExam, year, subjectId, isPublished])
+  @@map("past_papers")
+}
+
+model PastQuestion {
+  id            String    @id @default(uuid()) @db.Uuid
+  paperId       String    @map("paper_id") @db.Uuid
+  orderNum      Int       @map("order_num")
+  passage       String    @default("") @db.Text
+  question      String    @db.Text
+  options       Json      @db.JsonB
+  correctAnswer String    @map("correct_answer") @db.Text
+  explanation   String    @default("") @db.Text
+  mediaUrl      String?   @map("media_url") @db.VarChar(500)
+  mediaAlt      String    @default("") @map("media_alt") @db.VarChar(500)
+  sourceRow     Int       @map("source_row")
+  paper         PastPaper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+
+  @@unique([paperId, orderNum])
+  @@index([paperId, sourceRow])
+  @@map("past_questions")
+}
+
+model PastAttempt {
+  id              String    @id @default(uuid()) @db.Uuid
+  quizTakerId     String    @map("quiz_taker_id") @db.Uuid
+  year            Int
+  paperSnapshot   Json      @map("paper_snapshot") @db.JsonB
+  questionSnapshot Json     @map("question_snapshot") @db.JsonB
+  answers         Json      @default("{}") @db.JsonB
+  score           Int?
+  totalPoints     Int       @map("total_points")
+  durationSeconds Int       @map("duration_seconds")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  submittedAt     DateTime? @map("submitted_at")
+  student         QuizTaker @relation(fields: [quizTakerId], references: [id], onDelete: Restrict)
+
+  @@index([quizTakerId, submittedAt, startedAt])
+  @@index([year, startedAt])
+  @@map("past_attempts")
 }
 
 // =============================================

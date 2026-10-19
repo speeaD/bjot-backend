@@ -65,6 +65,7 @@ app.use('/api/public/quiz', require('./routes/public.js'));
 app.use('/api/public-exams', require('./routes/public-exams'));
 app.use('/api/public/content', require('./routes/landing-content-public'));
 app.use('/api/cbt', require('./routes/cbt.js'));
+app.use('/api/past-questions', require('./routes/past-questions.js'));
 app.use('/api/games', require('./routes/games'));
 
 // Test route to verify server is working
