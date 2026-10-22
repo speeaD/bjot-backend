@@ -10,8 +10,8 @@ const sections = [
     displayOrder: 0,
     content: {
       eyebrow: "DISCIPLINE || CONSISTENCY || EXCELLENCE",
-      heading: "PREPARE DIFFERENT. SCORE HIGHER.",
-      description: "Nigeria's most trusted online platform for JAMB, WAEC, NECO & POST-UTME preparation.",
+      heading: "Online JAMB tutorial in Nigeria: prepare for UTME with BJOT",
+      description: "Learn with BJOT tutors, practise CBT questions and use mock exams to guide your JAMB UTME revision.",
       primaryCta: { label: "Join BJOT Free", href: "/register" },
       secondaryCta: { label: "Explore Premium", href: "#premium" },
       trustText: "Trusted by 30,000+ students",
