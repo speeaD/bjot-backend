@@ -313,6 +313,9 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
       id: q.id,
       type: q.type,
       question: q.question,
+      passage: q.passage,
+      diagram: q.diagram,
+      diagramAlt: q.diagramAlt,
       options: q.options,
       points: q.points,
       order: q.orderNum,
@@ -868,13 +871,13 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
       const totalScore = allAnswers.reduce((sum, ans) => sum + ans.pointsAwarded, 0);
       const percentage = quiz.totalPoints > 0 ? (totalScore / quiz.totalPoints) * 100 : 0;
+      const hasEssay = allAnswers.some((answer) => answer.questionType === 'essay');
 
       // Handle final submission
       if (isFinalSubmission) {
         const endTime = new Date();
         const timeTaken = Math.floor((endTime - submission.startedAt) / 1000);
         
-        const hasEssay = allAnswers.some((answer) => answer.questionType === 'essay');
         const finalStatus = hasEssay ? "pending-manual-grading" : "auto-graded";
 
         await tx.quizSubmission.update({
