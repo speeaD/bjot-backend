@@ -201,6 +201,8 @@ model StudyMaterial {
   type         String   @db.VarChar(20)
   content      String   @db.Text
   altText      String   @default("") @map("alt_text") @db.VarChar(500)
+  diagramUrl   String?  @map("diagram_url") @db.VarChar(500)
+  diagramAlt   String   @default("") @map("diagram_alt") @db.VarChar(500)
   displayOrder Int      @default(0) @map("display_order")
   isPublished  Boolean  @default(false) @map("is_published")
   createdAt    DateTime @default(now()) @map("created_at")

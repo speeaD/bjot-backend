@@ -55,7 +55,10 @@ test('attempt response hides correct answers and submission grades the saved sna
   const answers = saved.questionIds.map((questionId) => ({ questionId, answer: 'Right' }));
   const submitted = await call('post', '/attempts/:id/submit', { id: attemptId }, { answers });
   assert.equal(submitted.statusCode, 200);
-  assert.deepEqual(submitted.body.result, { score: 40, totalPoints: 40, percentage: 100 });
+  assert.equal(submitted.body.result.score, 40);
+  assert.equal(submitted.body.result.totalPoints, 40);
+  assert.equal(submitted.body.result.percentage, 100);
+  assert.equal(submitted.body.result.review.length, 40);
   assert.equal(saved.answers.length, 40);
 });
 

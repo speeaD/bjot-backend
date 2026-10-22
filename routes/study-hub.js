@@ -30,12 +30,18 @@ function materialInput(body) {
   const title = typeof body?.title === 'string' ? body.title.trim() : '';
   const raw = typeof body?.content === 'string' ? body.content.trim() : '';
   const altText = typeof body?.altText === 'string' ? body.altText.trim() : '';
+  const diagramRaw = typeof body?.diagramUrl === 'string' ? body.diagramUrl.trim() : '';
+  const diagramAltRaw = typeof body?.diagramAlt === 'string' ? body.diagramAlt.trim() : '';
   const content = ['image', 'youtube'].includes(type) ? mediaUrl(raw, type) : raw;
+  const hasDiagram = ['text', 'passage'].includes(type) && !!diagramRaw;
+  const diagramUrl = hasDiagram ? mediaUrl(diagramRaw, 'image') : null;
+  const diagramAlt = hasDiagram ? diagramAltRaw : '';
   const displayOrder = body?.displayOrder === undefined ? 0 : Number(body.displayOrder);
   if (!types.has(type) || !title || title.length > 255 || !content || raw.length > 50000 || altText.length > 500 ||
-    (type === 'image' && !altText) || !Number.isInteger(displayOrder) || displayOrder < 0 || displayOrder > 100000 ||
+    (type === 'image' && !altText) || diagramRaw.length > 500 || diagramAltRaw.length > 500 ||
+    (hasDiagram && (!diagramUrl || !diagramAlt)) || !Number.isInteger(displayOrder) || displayOrder < 0 || displayOrder > 100000 ||
     (body?.isPublished !== undefined && typeof body.isPublished !== 'boolean')) return null;
-  return { type, title, content, altText, displayOrder, isPublished: body.isPublished ?? false };
+  return { type, title, content, altText, diagramUrl, diagramAlt, displayOrder, isPublished: body.isPublished ?? false };
 }
 
 async function studentTopic(id, studentId) {
@@ -63,7 +69,7 @@ router.post('/admin/topics/:topicId/materials', verifyAdmin, async (req, res) =>
   try {
     if (!UUID.test(req.params.topicId)) return res.status(400).json({ success: false, message: 'Invalid topic ID' });
     const input = materialInput(req.body);
-    if (!input) return res.status(400).json({ success: false, message: 'Enter a title and valid text, passage, image URL with alt text, or YouTube URL' });
+    if (!input) return res.status(400).json({ success: false, message: 'Enter valid material content and a description for each image or attached diagram' });
     const topic = await prisma.topic.findUnique({ where: { id: req.params.topicId } });
     if (!topic) return res.status(404).json({ success: false, message: 'Topic not found' });
     const material = await prisma.studyMaterial.create({ data: { ...input, topicId: topic.id } });
