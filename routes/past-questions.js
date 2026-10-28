@@ -47,6 +47,13 @@ const validAnswers = (value, questions) => value && typeof value === 'object' &&
     const question = questions.find((item) => item.id === id);
     return question && typeof answer === 'string' && (answer === '' || question.options.includes(answer));
   });
+
+// Pause all student practice endpoints during maintenance. Admin paper management
+// remains available so administrators can continue preparing and reviewing papers.
+router.use((req, res, next) => req.path.startsWith('/admin')
+  ? next()
+  : res.status(503).json({ success: false, message: 'JAMB Practice is under maintenance. Please check back later.' }));
+
 async function finish(db, attempt, answers) {
   const marked = grade(attempt.questionSnapshot, answers);
   return db.pastAttempt.update({ where: { id: attempt.id }, data: { answers, score: marked.score,
