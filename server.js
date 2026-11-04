@@ -42,6 +42,8 @@ app.set('upload', upload);
 
 // Middleware 
 app.use(cors());
+// Bachs signatures cover the original bytes, before JSON parsing.
+app.use('/api/payments/webhook', express.raw({ type: 'application/json', limit: '256kb' }));
 app.use(express.json({ limit: '2mb' }));
 
 // MongoDB Connection
@@ -51,6 +53,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin/content', require('./routes/landing-content-admin'));
 app.use('/api/attendance/admin/schedules', require('./routes/schedules'));

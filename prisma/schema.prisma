@@ -514,6 +514,10 @@ model QuizQuestion {
 model QuizTaker {
   id           String   @id @default(uuid()) @db.Uuid
   accountType  String   @map("account_type") @db.VarChar(20)
+  subscriptionPlanId String? @map("subscription_plan_id") @db.VarChar(100)
+  subscriptionLevel String? @map("subscription_level") @db.VarChar(20)
+  subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  payments Payment[]
   name         String?  @db.VarChar(255)
   // NOTE: Mongoose typed these as `Number`, but a phone number with a country code
   // (e.g. 2348012345678) overflows Postgres's 32-bit Int, so these use BigInt instead.
@@ -1125,4 +1129,29 @@ model ScheduleOverride {
 
   @@index([scheduleId, date])
   @@map("schedule_overrides")
+}
+
+// Server-owned checkout snapshots. Never accept amounts or access levels from the browser.
+model Payment {
+  id String @id @default(uuid()) @db.Uuid
+  reference String @unique @db.VarChar(100)
+  checkoutId String? @unique @map("checkout_id") @db.VarChar(100)
+  quizTakerId String @map("quiz_taker_id") @db.Uuid
+  planId String @map("plan_id") @db.VarChar(100)
+  planLevel String @map("plan_level") @db.VarChar(20)
+  months Int?
+  fixedExpiresAt DateTime? @map("fixed_expires_at")
+  amount Int
+  currency String @default("NGN") @db.VarChar(3)
+  email String @db.VarChar(255)
+  status String @default("pending") @db.VarChar(20)
+  authorizationUrl String? @map("authorization_url") @db.Text
+  paidAt DateTime? @map("paid_at")
+  fulfilledAt DateTime? @map("fulfilled_at")
+  expiresAt DateTime? @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  quizTaker QuizTaker @relation(fields: [quizTakerId], references: [id], onDelete: Restrict)
+  @@index([quizTakerId, createdAt])
+  @@map("payments")
 }

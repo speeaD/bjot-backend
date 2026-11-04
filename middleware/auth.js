@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../utils/database');
+const { subscriptionFor } = require('../utils/subscriptions');
 
 // Verify Admin
 exports.verifyAdmin = async (req, res, next) => {
@@ -72,6 +73,9 @@ exports.verifyQuizTaker = async (req, res, next) => {
         id: true,
         email: true,
         accountType: true,
+        subscriptionPlanId: true,
+        subscriptionLevel: true,
+        subscriptionExpiresAt: true,
         isActive: true,
       },
     });
@@ -90,7 +94,7 @@ exports.verifyQuizTaker = async (req, res, next) => {
       });
     }
 
-    req.quizTaker = quizTaker;
+    req.quizTaker = { ...quizTaker, accountType: subscriptionFor(quizTaker).accountType };
     next();
   } catch (error) {
     res.status(401).json({

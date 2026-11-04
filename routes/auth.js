@@ -1,3 +1,4 @@
+const { subscriptionFor } = require('../utils/subscriptions');
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -196,7 +197,8 @@ router.post('/quiztaker/login', async (req, res) => {
       quizTaker: {
         id: quizTaker.id,
         email: quizTaker.email,
-        accountType: quizTaker.accountType,
+        accountType: subscriptionFor(quizTaker).accountType,
+        subscription: subscriptionFor(quizTaker),
       },
     });
   } catch (error) {

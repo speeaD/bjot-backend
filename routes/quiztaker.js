@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { verifyQuizTaker } = require("../middleware/auth");
 const prisma = require('../utils/database');
+const { subscriptionFor } = require('../utils/subscriptions');
 const { calculateStreak } = require('../utils/streak');
 
 router.use(['/quiz', '/submission'], verifyQuizTaker, (req, res, next) => {
@@ -79,9 +80,10 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
         id: quizTaker.id,
         name: quizTaker.name,
         email: quizTaker.email,
-        accountType: quizTaker.accountType,
+        accountType: req.quizTaker.accountType,
+        subscription: subscriptionFor(req.quizTaker),
         accessCode: quizTaker.accessCode,
-        assignedQuizzes: quizTaker.accountType === 'premium' ? quizTaker.assignedQuizzes : [],
+        assignedQuizzes: req.quizTaker.accountType === 'premium' ? quizTaker.assignedQuizzes : [],
         createdAt: quizTaker.createdAt,
       },
     });

@@ -3,6 +3,7 @@ const prisma = require('../utils/database');
 const { verifyAdmin, verifyQuizTaker } = require('../middleware/auth');
 const { parseQuestionCsv, validateQuestion, publicQuestion, grade, fingerprint } = require('../utils/past-questions');
 
+const { requirePro } = require('../utils/subscriptions');
 const router = express.Router();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ENGLISH = /^(?:use of english|english(?: language)?)$/;
@@ -48,11 +49,10 @@ const validAnswers = (value, questions) => value && typeof value === 'object' &&
     return question && typeof answer === 'string' && (answer === '' || question.options.includes(answer));
   });
 
-// Pause all student practice endpoints during maintenance. Admin paper management
-// remains available so administrators can continue preparing and reviewing papers.
-router.use((req, res, next) => req.path.startsWith('/admin')
-  ? next()
-  : res.status(503).json({ success: false, message: 'JAMB Practice is under maintenance. Please check back later.' }));
+// JAMB Practice remains paused until paper preparation is complete.
+const practiceMaintenance = (_req, res) => res.status(503).json({
+  success: false, message: 'JAMB Practice is under maintenance. Please check back later.',
+});
 
 async function finish(db, attempt, answers) {
   const marked = grade(attempt.questionSnapshot, answers);
@@ -60,7 +60,7 @@ async function finish(db, attempt, answers) {
     submittedAt: new Date() } });
 }
 
-router.get('/availability', verifyQuizTaker, handle(async (req, res) => {
+router.get('/availability', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   const [subjects, papers] = await Promise.all([
     prisma.questionSet.findMany({ where: { isActive: true }, select: { id: true, title: true }, orderBy: { title: 'asc' } }),
     prisma.pastPaper.findMany({ where: { sourceExam: EXAM, isPublished: true, questionCount: { gt: 0 }, questions: { some: {} } },
@@ -71,17 +71,17 @@ router.get('/availability', verifyQuizTaker, handle(async (req, res) => {
     subjects: subjects.map((item) => ({ _id: item.id, title: item.title })),
     years: [...new Set(papers.filter((item) => active.has(item.subjectId)).map((item) => item.year))],
     papers: papers.filter((item) => active.has(item.subjectId)).map((item) => ({ ...item,
-      questionCount: req.quizTaker.accountType === 'premium' ? item.questionCount : Math.min(10, item.questionCount) })) });
+      questionCount: item.questionCount })) });
 }));
 
-router.get('/attempts/active', verifyQuizTaker, handle(async (req, res) => {
+router.get('/attempts/active', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   const attempts = await prisma.pastAttempt.findMany({ where: { quizTakerId: req.quizTaker.id, submittedAt: null },
     select: { id: true, year: true, startedAt: true, durationSeconds: true }, orderBy: { startedAt: 'desc' }, take: 10 });
   res.json({ success: true, attempts: attempts.map((item) => ({ ...item,
     expiresAt: new Date(item.startedAt.getTime() + item.durationSeconds * 1000) })) });
 }));
 
-router.post('/attempts', verifyQuizTaker, handle(async (req, res) => {
+router.post('/attempts', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   const year = yearValue(req.body?.year);
   const ids = req.body?.subjectIds;
   if (!year || !Array.isArray(ids) || ids.length !== 4 || new Set(ids).size !== 4 || !ids.every((id) => typeof id === 'string' && UUID.test(id)))
@@ -96,7 +96,7 @@ router.post('/attempts', verifyQuizTaker, handle(async (req, res) => {
   if (new Set(papers.map((paper) => paper.durationSeconds)).size !== 1) fail(409, 'These papers have different time limits');
   const ordered = ids.map((id) => papers.find((paper) => paper.subjectId === id));
   const snapshots = ordered.flatMap((paper) => {
-    const count = req.quizTaker.accountType === 'premium' ? paper.questionCount : Math.min(10, paper.questionCount);
+    const count = paper.questionCount;
     return paper.questions.slice(0, count).map((question) => ({ id: question.id, paperId: paper.id,
       subjectId: paper.subjectId, orderNum: question.orderNum, question: question.question,
       passage: question.passage, options: question.options, correctAnswer: question.correctAnswer,
@@ -105,12 +105,12 @@ router.post('/attempts', verifyQuizTaker, handle(async (req, res) => {
   const attempt = await prisma.pastAttempt.create({ data: { quizTakerId: req.quizTaker.id, year,
     paperSnapshot: ordered.map((paper) => ({ id: paper.id, sourceExam: paper.sourceExam, version: paper.version, year: paper.year,
       subjectId: paper.subjectId, subjectTitle: paper.subjectTitle, durationSeconds: paper.durationSeconds,
-      questionCount: req.quizTaker.accountType === 'premium' ? paper.questionCount : Math.min(10, paper.questionCount) })),
+      questionCount: paper.questionCount })),
     questionSnapshot: snapshots, totalPoints: snapshots.length, durationSeconds: ordered[0].durationSeconds } });
   res.status(201).json({ success: true, attempt: attemptView(attempt) });
 }));
 
-router.get('/attempts/:id', verifyQuizTaker, handle(async (req, res) => {
+router.get('/attempts/:id', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   let attempt = await prisma.pastAttempt.findFirst({ where: { id: req.params.id, quizTakerId: req.quizTaker.id } });
   if (!attempt) fail(404, 'Practice attempt not found');
@@ -121,7 +121,7 @@ router.get('/attempts/:id', verifyQuizTaker, handle(async (req, res) => {
   res.json(attempt.submittedAt ? { success: true, result: result(attempt) } : { success: true, attempt: attemptView(attempt) });
 }));
 
-router.patch('/attempts/:id/answers', verifyQuizTaker, handle(async (req, res) => {
+router.patch('/attempts/:id/answers', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const outcome = await prisma.$transaction(async (db) => {
     const attempt = await lockAttempt(db, req.params.id, req.quizTaker.id);
@@ -135,7 +135,7 @@ router.patch('/attempts/:id/answers', verifyQuizTaker, handle(async (req, res) =
   res.json({ success: true, answers: outcome.attempt.answers });
 }));
 
-router.post('/attempts/:id/submit', verifyQuizTaker, handle(async (req, res) => {
+router.post('/attempts/:id/submit', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const attempt = await prisma.$transaction(async (db) => {
     const locked = await lockAttempt(db, req.params.id, req.quizTaker.id);
@@ -148,7 +148,7 @@ router.post('/attempts/:id/submit', verifyQuizTaker, handle(async (req, res) => 
   res.json({ success: true, result: result(attempt) });
 }));
 
-router.get('/attempts/:id/result', verifyQuizTaker, handle(async (req, res) => {
+router.get('/attempts/:id/result', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const attempt = await prisma.pastAttempt.findFirst({ where: { id: req.params.id, quizTakerId: req.quizTaker.id } });
   if (!attempt) fail(404, 'Practice attempt not found');

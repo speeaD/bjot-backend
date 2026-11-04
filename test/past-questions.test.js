@@ -32,6 +32,7 @@ const database = {
 const databasePath = require.resolve('../utils/database');
 require.cache[databasePath] = { id: databasePath, filename: databasePath, loaded: true, exports: database };
 const router = require('../routes/past-questions');
+const { requirePro } = require('../utils/subscriptions');
 const { verifyAdmin, verifyQuizTaker } = require('../middleware/auth');
 
 test.beforeEach(() => { attempt = null; writes = 0; });
@@ -56,6 +57,9 @@ test('CSV import validates every row, answer text, and duplicate questions', () 
 test('student and admin routes keep their separate authorization guards', () => {
   const student = router.stack.find((item) => item.route?.path === '/availability');
   assert.equal(student.route.stack[0].handle, verifyQuizTaker);
+  for (const layer of router.stack.filter((item) => item.route && !item.route.path.startsWith('/admin'))) {
+    assert.equal(layer.route.stack[1].handle, requirePro);
+  }
   assert(router.stack.some((item) => item.handle === verifyAdmin));
 });
 
@@ -70,18 +74,19 @@ test('start uses only the selected year and saves exact IDs without exposing ans
   assert.equal((await start(2025)).statusCode, 409);
 });
 
-test('regular accounts receive no more than ten questions from the same paper', async () => {
-  const english = papers[0];
-  const original = { questions: english.questions, questionCount: english.questionCount };
-  try {
-    english.questions = Array.from({ length: 12 }, (_, index) => ({ ...original.questions[0], id: uuid(70000 + index), orderNum: index + 1 }));
-    english.questionCount = 12;
-    const response = await call('post', '/attempts', { year: 2024, subjectIds }, {}, studentId, 'regular');
-    assert.equal(response.statusCode, 201);
-    assert.equal(response.body.attempt.questionsBySet[subjectIds[0]].length, 10);
-    assert.equal(attempt.paperSnapshot[0].questionCount, 10);
-    assert.equal(attempt.durationSeconds, 7200);
-  } finally { Object.assign(english, original); }
+test('regular, Lite, expired Pro and legacy premium accounts cannot access past papers', () => {
+  for (const student of [
+    { accountType: 'regular' }, { accountType: 'premium' },
+    { accountType: 'premium', subscriptionLevel: 'lite' },
+    { accountType: 'premium', subscriptionLevel: 'pro', subscriptionExpiresAt: new Date(0) },
+  ]) {
+    const res = { status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; } };
+    let called = false;
+    requirePro({ quizTaker: student }, res, () => { called = true; });
+    assert.equal(called, false);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.body.code, 'PRO_REQUIRED');
+  }
 });
 
 test('attempt ownership is enforced on resume and submission', async () => {
