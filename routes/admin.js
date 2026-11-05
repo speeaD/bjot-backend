@@ -4,6 +4,7 @@ const { verifyAdmin } = require("../middleware/auth");
 const prisma = require("../utils/database");
 const multer = require("multer");
 const XLSX = require("xlsx");
+const { listAdminSubmissions, publicSubmission, publicAttemptInclude } = require('../utils/admin-submissions');
 // const { sendAccessCodeEmail } = require("../utils/emailService");
 
 
@@ -1010,61 +1011,10 @@ router.post("/quiztakers/unassign", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.get("/submissions", verifyAdmin, async (req, res) => {
   try {
-    const { accountType, page = 1, limit = 50 } = req.query;
-
-    // Build where clause
-    const where = {};
-    
-    if (accountType && ["premium", "regular"].includes(accountType)) {
-      where.quizTaker = {
-        accountType: accountType
-      };
-    }
-
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Changed from: QuizSubmission.find().populate()
-    const [submissions, total] = await Promise.all([
-      prisma.quizSubmission.findMany({
-        where,
-        include: {
-          quiz: {
-            select: {
-              id: true,
-              title: true,
-              isOpenQuiz: true,
-            }
-          },
-          quizTaker: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              accountType: true,
-              accessCode: true,
-            }
-          }
-        },
-        orderBy: {
-          submittedAt: 'desc'
-        },
-        skip,
-        take: parseInt(limit),
-      }),
-      prisma.quizSubmission.count({ where })
-    ]);
-
-    res.json({
-      success: true,
-      count: submissions.length,
-      total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit)),
-      submissions,
-    });
+    res.set('Cache-Control', 'no-store').json(await listAdminSubmissions(prisma, req.query));
   } catch (error) {
     console.error("Get submissions error:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: "Server error",
       error: error.message,
@@ -1105,6 +1055,11 @@ router.get("/submission/:id", verifyAdmin, async (req, res) => {
     });
 
     if (!submission) {
+      const attempt = await prisma.publicMockAttempt.findUnique({ where: { id: req.params.id }, include: publicAttemptInclude });
+      if (attempt) {
+        const grade = await prisma.publicMockGrade.findUnique({ where: { attemptId: attempt.id } });
+        return res.json({ success: true, submission: publicSubmission(attempt, !!grade, true) });
+      }
       return res.status(404).json({
         success: false,
         message: "Submission not found",

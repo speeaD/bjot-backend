@@ -54,6 +54,8 @@ router.get("/dashboard", verifyQuizTaker, async (req, res) => {
                 isQuizChallenge: true,
                 isOpenQuiz: true,
                 description: true,
+                multipleAttempts: true,
+                isActive: true,
               }
             },
             submissions: {
@@ -172,13 +174,6 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
       });
     }
 
-    if (assignedQuiz.status === "completed") {
-      return res.status(400).json({
-        success: false,
-        message: "You have already completed this quiz",
-      });
-    }
-
     // Changed from: Quiz.findById()
     const quiz = await prisma.quiz.findUnique({
       where: { id: req.params.quizId },
@@ -208,6 +203,13 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
       });
     }
 
+    if (assignedQuiz.status === "completed" && !quiz.multipleAttempts) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already completed this quiz",
+      });
+    }
+
     const questionSetsOverview = quiz.questionSets.map((qs) => ({
       id: qs.id,
       questionSetId: qs.questionSetId,
@@ -220,7 +222,9 @@ router.get("/quiz/:quizId", verifyQuizTaker, async (req, res) => {
     // Get selected question set order
     const selectedQuestionSetOrder = assignedQuiz.questionSetOrder.length > 0
       ? assignedQuiz.questionSetOrder.map(qso => qso.orderValue)
-      : null;
+      : assignedQuiz.status === 'completed'
+        ? quiz.questionSets.map(qs => qs.orderNum)
+        : null;
 
     res.json({
       success: true,
@@ -484,6 +488,14 @@ async function ensureQuestionSetProgress(tx, assignedQuiz, quiz) {
   return order;
 }
 
+// Serialize starts and submissions so a retake cannot reset an active attempt,
+// and duplicate final submissions cannot create another attempt.
+async function lockAssignedQuiz(tx, quizTakerId, quizId) {
+  await tx.$queryRaw`SELECT id FROM assigned_quizzes
+    WHERE quiz_taker_id = ${quizTakerId}::uuid AND quiz_id = ${quizId}::uuid FOR UPDATE`;
+  return tx.assignedQuiz.findFirst({ where: { quizTakerId, quizId } });
+}
+
 // @route   GET /api/quiztaker/quiz/:quizId/progress
 // @desc    Get detailed quiz progress (restored from prod).
 router.get('/quiz/:quizId/progress', verifyQuizTaker, async (req, res) => {
@@ -544,18 +556,27 @@ router.get('/quiz/:quizId/progress', verifyQuizTaker, async (req, res) => {
 router.post('/quiz/:quizId/start', verifyQuizTaker, async (req, res) => {
   try {
     const started = await prisma.$transaction(async (tx) => {
-      const assignment = await tx.assignedQuiz.findFirst({ where: { quizTakerId: req.quizTaker.id, quizId: req.params.quizId } });
+      const assignment = await lockAssignedQuiz(tx, req.quizTaker.id, req.params.quizId);
       if (!assignment) return null;
-      if (assignment.status === 'completed') return { completed: true };
-      if (assignment.status === 'in-progress') return { alreadyStarted: true, startedAt: assignment.startedAt };
       const quiz = await tx.quiz.findUnique({ where: { id: req.params.quizId }, include: { questionSets: { orderBy: { orderNum: 'asc' } } } });
       if (!quiz) throw new Error('Quiz not found');
+      if (!quiz.isActive) return { inactive: true };
+      if (assignment.status === 'completed' && !quiz.multipleAttempts) return { completed: true };
+      if (assignment.status === 'in-progress') return { alreadyStarted: true, startedAt: assignment.startedAt };
+      if (assignment.status === 'completed') {
+        // Progress belongs to the current attempt. Historical submissions and
+        // results remain intact when an admin permits another attempt.
+        await tx.questionSetProgress.deleteMany({ where: { assignedQuizId: assignment.id } });
+      }
       const now = new Date();
-      await tx.assignedQuiz.update({ where: { id: assignment.id }, data: { status: 'in-progress', startedAt: now } });
-      await ensureQuestionSetProgress(tx, assignment, quiz);
+      const order = await ensureQuestionSetProgress(tx, assignment, quiz);
+      await tx.assignedQuiz.update({ where: { id: assignment.id }, data: {
+        status: 'in-progress', startedAt: now, completedAt: null, currentQuestionSetOrder: order[0],
+      } });
       return { startedAt: now };
     });
     if (!started) return res.status(403).json({ success: false, message: 'This quiz is not assigned to you' });
+    if (started.inactive) return res.status(400).json({ success: false, message: 'This quiz is not currently active' });
     if (started.completed) return res.status(400).json({ success: false, message: 'You have already completed this quiz' });
     if (started.alreadyStarted) return res.json({ success: true, message: 'Quiz already in progress', startedAt: started.startedAt });
     res.json({ success: true, message: 'Quiz started successfully', startedAt: started.startedAt });
@@ -664,18 +685,13 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
     // Use Prisma transactions for atomic operations
     const result = await prisma.$transaction(async (tx) => {
       // Get assigned quiz with lock
-      const assignedQuiz = await tx.assignedQuiz.findFirst({
-        where: {
-          quizTakerId: req.quizTaker.id,
-          quizId: req.params.quizId
-        },
-        include: {
-          questionSetProgress: true
-        }
-      });
+      const assignedQuiz = await lockAssignedQuiz(tx, req.quizTaker.id, req.params.quizId);
 
       if (!assignedQuiz) {
         throw new Error("This quiz is not assigned to you");
+      }
+      if (assignedQuiz.status === 'completed') {
+        throw Object.assign(new Error('This attempt has already been completed. Start a new attempt if retakes are allowed.'), { statusCode: 400 });
       }
 
       // Get quiz with questions
@@ -696,7 +712,6 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
       if (!quiz) {
         throw new Error("Quiz not found");
       }
-
       // Find the question set being submitted
       const questionSet = quiz.questionSets.find(qs => qs.orderNum === questionSetOrder);
       
@@ -731,7 +746,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
             totalPoints: quiz.totalPoints,
             percentage: 0,
             timeTaken: 0,
-            startedAt: now,
+            startedAt: assignedQuiz.startedAt || now,
             submittedAt: now, // Will be updated on final submission
           },
           include: {
@@ -744,7 +759,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
           where: { id: assignedQuiz.id },
           data: {
             status: 'in-progress',
-            startedAt: now
+            startedAt: assignedQuiz.startedAt || now
           }
         });
       }
@@ -949,7 +964,7 @@ router.post("/quiz/:quizId/submit", verifyQuizTaker, async (req, res) => {
 
   } catch (error) {
     console.error("Submit quiz error:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || "Server error",
       error: error.message,
