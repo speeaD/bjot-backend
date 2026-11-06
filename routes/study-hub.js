@@ -104,7 +104,7 @@ router.get('/subjects', async (req, res) => {
   try {
     const subjects = await prisma.questionSet.findMany({ where: { isActive: true, quizTakerQuestionSets: { some: { quizTakerId: req.quizTaker.id } } },
       select: { id: true, title: true, topics: { where: { isActive: true }, orderBy: { name: 'asc' },
-        select: { id: true, name: true, _count: { select: { studyMaterials: { where: { isPublished: true } }, questions: { where: eligibleQuestions } } } } } }, orderBy: { title: 'asc' } });
+        select: { id: true, name: true, coverImageUrl: true, _count: { select: { studyMaterials: { where: { isPublished: true } }, questions: { where: eligibleQuestions } } } } } }, orderBy: { title: 'asc' } });
     res.json({ success: true, subjects });
   } catch (error) { failure(res, error); }
 });
@@ -120,7 +120,7 @@ router.get('/topics/:id', async (req, res) => {
       prisma.studyAttempt.findMany({ where: { topicId: topic.id, studentId: req.quizTaker.id, submittedAt: { not: null } }, orderBy: { startedAt: 'desc' }, take: 5,
         select: { id: true, score: true, totalPoints: true, startedAt: true, submittedAt: true } }),
     ]);
-    res.json({ success: true, topic: { id: topic.id, name: topic.name, subject: topic.questionSet }, materials, questionCount, canTakeTest: questionCount >= 30 && materials.length > 0, attempts });
+    res.json({ success: true, topic: { id: topic.id, name: topic.name, coverImageUrl: topic.coverImageUrl ?? null, subject: topic.questionSet }, materials, questionCount, canTakeTest: questionCount >= 30 && materials.length > 0, attempts });
   } catch (error) { failure(res, error); }
 });
 

@@ -68,6 +68,20 @@ async function refreshTotals(tx, questionSetId) {
 
 const getSet = (id, include = INCLUDE) => prisma.questionSet.findUnique({ where: { id }, include });
 
+function topicCoverImageUrl(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 500) return false;
+  try {
+    const url = new URL(trimmed);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.href.length > 500) return false;
+    return url.href;
+  } catch { return false; }
+}
+
 // Publish a reviewed question draft across several topics in one transaction.
 // The organizer sends answer letters; stored answers use option text so all
 // existing exam grading paths continue to compare the selected option value.
@@ -221,11 +235,13 @@ router.post('/:id/topics/:topicId/tests/:testId/questions', verifyAdmin, async (
 
 router.post('/:id/topics', verifyAdmin, async (req, res) => {
   try {
-    const name = req.body.name?.trim();
-    if (!name) return res.status(400).json({ success: false, message: 'Topic name is required' });
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name || name.length > 255) return res.status(400).json({ success: false, message: 'Enter a topic name of 255 characters or fewer' });
+    const coverImageUrl = topicCoverImageUrl(req.body?.coverImageUrl);
+    if (coverImageUrl === false) return res.status(400).json({ success: false, message: 'Enter a valid HTTP or HTTPS cover image URL of 500 characters or fewer' });
     const set = await prisma.questionSet.findUnique({ where: { id: req.params.id } });
     if (!set) return res.status(404).json({ success: false, message: 'Question set not found' });
-    const topic = await prisma.topic.create({ data: { questionSetId: set.id, name } });
+    const topic = await prisma.topic.create({ data: { questionSetId: set.id, name, ...(coverImageUrl !== undefined && { coverImageUrl }) } });
     res.status(201).json({ success: true, message: 'Topic created successfully', topic: { ...topic, studentPath: `/topic-test?topicId=${topic.id}` } });
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
@@ -239,7 +255,9 @@ router.put('/:id/topics/:topicId', verifyAdmin, async (req, res) => {
     if (!topic) return res.status(404).json({ success: false, message: 'Topic not found' });
     const name = req.body.name === undefined ? undefined : typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (name !== undefined && (!name || name.length > 255)) return res.status(400).json({ success: false, message: 'Enter a topic name of 255 characters or fewer' });
-    const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(name !== undefined && { name }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
+    const coverImageUrl = topicCoverImageUrl(req.body.coverImageUrl);
+    if (coverImageUrl === false) return res.status(400).json({ success: false, message: 'Enter a valid HTTP or HTTPS cover image URL of 500 characters or fewer' });
+    const updated = await prisma.topic.update({ where: { id: topic.id }, data: { ...(name !== undefined && { name }), ...(coverImageUrl !== undefined && { coverImageUrl }), ...(req.body.isActive !== undefined && { isActive: req.body.isActive }) } });
     res.json({ success: true, message: 'Topic updated successfully', topic: { ...updated, studentPath: `/topic-test?topicId=${updated.id}` } });
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ success: false, message: 'A topic with this name already exists for this question set' });
