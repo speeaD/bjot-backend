@@ -829,10 +829,10 @@ router.post(["/assign-quiz", "/quiztakers/assign"], verifyAdmin, async (req, res
 
         const quizCombination = quiz.questionSets.map(({ questionSetId }) => questionSetId);
         const takerCombination = quizTaker.questionSets.map(({ questionSetId }) => questionSetId);
-        const validCombination = quiz.examType === 'single-subject'
+        const validCombination = quiz.studentSelectsSubjects || (quiz.examType === 'single-subject'
           ? takerCombination.includes(quizCombination[0])
           : quizCombination.length === takerCombination.length
-            && quizCombination.every((id) => takerCombination.includes(id));
+            && quizCombination.every((id) => takerCombination.includes(id)));
         if (!validCombination) {
           results.failed.push({
             takerId,

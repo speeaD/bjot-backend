@@ -20,10 +20,10 @@ test.beforeEach(() => {
   created = null;
 });
 
-async function create(questionFilters, examType = 'single-subject', questionSetCombination = ['physics']) {
+async function create(questionFilters, examType = 'single-subject', questionSetCombination = ['physics'], settings = {}) {
   const route = router.stack.find((layer) => layer.route?.path === '/' && layer.route.methods.post).route;
   const res = { statusCode: 200, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
-  await route.stack.at(-1).handle({ admin: { id: 'admin' }, body: { settings: { title: 'Range exam', examType }, questionSetCombination, questionFilters } }, res);
+  await route.stack.at(-1).handle({ admin: { id: 'admin' }, body: { settings: { title: 'Range exam', examType, ...settings }, questionSetCombination, questionFilters } }, res);
   return res;
 }
 
@@ -35,6 +35,23 @@ test('exam creation snapshots exactly the chosen topic range and calculates its 
   assert.deepEqual(subject.questions.create.map((question) => question.orderNum), [1, 2, 3]);
   assert.equal(created.totalPoints, 9);
   assert.deepEqual(subject.topicSelections.create, [{ topicId: 'motion', topicName: 'Motion', requestedCount: 3, selectedCount: 3 }]);
+});
+
+test('a student-choice mock snapshots all configured subjects and their selected topic questions', async () => {
+  subjects = ['English', 'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Government'].map((title, index) => ({
+    id: `subject-${index}`, title, topics: [{ id: 'motion', name: 'Topic', isActive: true }], questions,
+  }));
+  const ids = subjects.map((subject) => subject.id);
+  const filters = ids.map(() => ({ topicSelections: [{ topicId: 'motion', questionIds: ['q2', 'q4'], questionCount: 2 }] }));
+  const settings = { studentSelectsSubjects: true, duration: { hours: 2, minutes: 0, seconds: 0 } };
+  assert.equal((await create(filters, 'multi-subject', ids, settings)).statusCode, 201);
+  assert.equal(created.studentSelectsSubjects, true);
+  assert.equal(created.questionSets.create.length, 6);
+  assert.equal(created.durationMinutes, 0, 'a two-hour exam must not become two hours thirty minutes');
+  assert.equal(created.questionSets.create.every((set) => set.questions.create.length === 2), true);
+  assert.equal((await create(filters, 'single-subject', ids, settings)).statusCode, 400);
+  assert.equal((await create(filters.slice(1), 'multi-subject', ids.slice(1), settings)).statusCode, 400, 'English is required');
+  assert.equal((await create([null, ...filters.slice(1)], 'multi-subject', ids, settings)).statusCode, 400, 'every subject requires a topic selection');
 });
 
 test('subjects without topics support a question range and retain the full pool when no filter is supplied', async () => {

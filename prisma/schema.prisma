@@ -345,9 +345,11 @@ model Question {
 // =============================================
 model Quiz {
   id                String   @id @default(uuid()) @db.Uuid
-  // NEW: "single-subject" quizzes have exactly 1 question set, "multi-subject" have 4.
+  // Fixed mocks have four subjects; student-choice mocks hold a subject pool.
+  // Single-subject exams still have exactly one question set.
   // (Cardinality itself isn't enforced at the DB level - enforce in the app layer.)
   examType          String   @default("multi-subject") @map("exam_type") @db.VarChar(20)
+  studentSelectsSubjects Boolean @default(false) @map("student_selects_subjects")
   title             String   @db.VarChar(255)
   coverImage        String?  @map("cover_image") @db.VarChar(500)
   isQuizChallenge   Boolean  @default(false) @map("is_quiz_challenge")
@@ -395,6 +397,7 @@ model PublicMockSession {
   quizId      String    @map("quiz_id") @db.Uuid
   name        String    @db.VarChar(255)
   email       String    @db.VarChar(255)
+  selectedQuestionSetIds String[] @default([]) @map("selected_question_set_ids") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at")
   attempt     PublicMockAttempt?
   quiz        Quiz      @relation(fields: [quizId], references: [id], onDelete: Restrict)

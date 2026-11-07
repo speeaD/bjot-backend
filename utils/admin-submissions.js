@@ -1,4 +1,5 @@
 const { gradeQuestions } = require('./public-exam');
+const { sessionSubjects } = require('./mock-subjects');
 
 const publicAttemptInclude = {
   session: { include: { quiz: { include: {
@@ -8,6 +9,7 @@ const publicAttemptInclude = {
 
 function publicSubmission(attempt, countsForGrade, includeAnswers = false) {
   const { session } = attempt;
+  const sets = sessionSubjects(session);
   const quizTakerId = `public:${session.email.trim().toLowerCase()}`;
   const submission = {
     id: attempt.id,
@@ -24,7 +26,7 @@ function publicSubmission(attempt, countsForGrade, includeAnswers = false) {
     submittedAt: attempt.submittedAt,
     timeTaken: Math.max(0, Math.floor((attempt.submittedAt - session.createdAt) / 1000)),
     countsForGrade,
-    questionSetSubmissions: session.quiz.questionSets.map((set) => ({
+    questionSetSubmissions: sets.map((set) => ({
       questionSetOrder: set.orderNum,
       ...gradeQuestions(set.questions, attempt.answers),
       submittedAt: attempt.submittedAt,
@@ -32,7 +34,7 @@ function publicSubmission(attempt, countsForGrade, includeAnswers = false) {
   };
   if (includeAnswers) {
     const answers = new Map(attempt.answers.map((answer) => [answer.questionId, answer.answer]));
-    submission.answers = session.quiz.questionSets.flatMap((set) => set.questions.map((question) => {
+    submission.answers = sets.flatMap((set) => set.questions.map((question) => {
       const answer = answers.get(question.id) ?? '';
       const { score } = gradeQuestions([question], [{ questionId: question.id, answer }]);
       return { quizQuestionId: question.id, questionSetOrder: set.orderNum, questionType: question.type,
@@ -86,8 +88,8 @@ async function listAdminSubmissions(db, { accountType, page = '1', limit = '50' 
   ]) : [[], []];
   const quizIds = [...new Set(details.map((attempt) => attempt.session.quizId))];
   const quizzes = quizIds.length ? await db.quiz.findMany({ where: { id: { in: quizIds } }, select: {
-    id: true, title: true, isOpenQuiz: true,
-    questionSets: { orderBy: { orderNum: 'asc' }, select: { orderNum: true,
+    id: true, title: true, isOpenQuiz: true, studentSelectsSubjects: true,
+    questionSets: { orderBy: { orderNum: 'asc' }, select: { orderNum: true, questionSetId: true, title: true,
       questions: { select: { id: true, type: true, options: true, correctAnswer: true, points: true } } } },
   } }) : [];
   const byQuiz = new Map(quizzes.map((quiz) => [quiz.id, quiz]));

@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const prisma = require("../utils/database");
+const { lockQuiz } = require('../utils/quiz-editing');
+const { isEnglishSubject, selectedSubjects, matchesSubjects, sessionSubjects } = require('../utils/mock-subjects');
 const {
   AUTO_GRADED_TYPES,
   publicQuestion,
@@ -19,24 +21,21 @@ const include = {
 const fail = (res, error) => {
   console.error("Public quiz error:", error);
   return res
-    .status(500)
-    .json({ success: false, message: "Unable to complete quiz request" });
+    .status(error.statusCode || 500)
+    .json({ success: false, message: error.statusCode ? error.message : "Unable to complete quiz request" });
 };
 const available = (quiz) =>
   quiz.isActive &&
   quiz.isOpenQuiz &&
   quiz.viewResults &&
-  quiz.questionSets.length === 4 &&
+  (quiz.studentSelectsSubjects
+    ? quiz.questionSets.length >= 4 && quiz.questionSets.filter((set) => isEnglishSubject(set.title)).length === 1
+    : quiz.questionSets.length === 4) &&
   quiz.questionSets.every(
     (set) =>
       set.questions.length &&
       set.questions.every((question) => AUTO_GRADED_TYPES.has(question.type)),
   );
-const combination = (quiz) =>
-  quiz.questionSets
-    .map((set) => set.questionSetId)
-    .sort()
-    .join(",");
 
 router.post("/available", async (req, res) => {
   try {
@@ -61,7 +60,7 @@ router.post("/available", async (req, res) => {
     });
     const matches = quizzes.filter(
       (quiz) =>
-        available(quiz) && combination(quiz) === [...ids].sort().join(","),
+        available(quiz) && matchesSubjects(quiz, ids),
     );
     res.json({
       success: true,
@@ -78,8 +77,8 @@ router.post("/available", async (req, res) => {
             seconds: quiz.durationSeconds,
           },
         },
-        totalPoints: quiz.totalPoints,
-        questionSetCombination: quiz.questionSets.map((set) => ({
+        totalPoints: selectedSubjects(quiz, ids).reduce((sum, set) => sum + set.totalPoints, 0),
+        questionSetCombination: selectedSubjects(quiz, ids).map((set) => ({
           _id: set.questionSetId,
           title: set.title,
         })),
@@ -125,7 +124,7 @@ router.get("/submission/:id", async (req, res) => {
       const answers = new Map(
         attempt.answers.map((item) => [item.questionId, item.answer]),
       );
-      submission.answersByQuestionSet = attempt.session.quiz.questionSets.map(
+      submission.answersByQuestionSet = sessionSubjects(attempt.session).map(
         (set) => ({
           questionSetTitle: set.title,
           order: set.orderNum,
@@ -182,6 +181,7 @@ router.get("/:quizId", async (req, res) => {
       success: true,
       quiz: {
         _id: quiz.id,
+        studentSelectsSubjects: quiz.studentSelectsSubjects === true,
         settings: {
           title: quiz.title,
           description: quiz.description,
@@ -271,40 +271,32 @@ router.post("/:quizId/submit", async (req, res) => {
           message: "Enter a name, valid email, and four different subjects",
         });
     }
-    const quiz = await prisma.quiz.findUnique({
+    const submission = await prisma.$transaction(async (tx) => {
+    await lockQuiz(tx, req.params.quizId);
+    const quiz = await tx.quiz.findUnique({
       where: { id: req.params.quizId },
       include,
     });
-    if (!quiz || !available(quiz))
-      return res
-        .status(404)
-        .json({ success: false, message: "Open quiz not found" });
-    if (combination(quiz) !== [...questionSetCombination].sort().join(","))
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Question set combination does not match this quiz",
-        });
-    const questions = quiz.questionSets.flatMap((set) => set.questions);
+    if (!quiz || !available(quiz)) throw Object.assign(new Error('Open quiz not found'), { statusCode: 404 });
+    if (!matchesSubjects(quiz, questionSetCombination)) throw Object.assign(new Error('Question set combination does not match this quiz'), { statusCode: 400 });
+    const questions = selectedSubjects(quiz, questionSetCombination).flatMap((set) => set.questions);
     if (
       !validateAnswers(
         answers,
         new Set(questions.map((question) => question.id)),
       )
     )
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid answers" });
+      throw Object.assign(new Error('Invalid answers'), { statusCode: 400 });
     const result = gradeQuestions(questions, answers);
     const normalizedEmail = email.trim().toLowerCase();
-    const session = await prisma.publicMockSession.create({
-      data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail },
+    const session = await tx.publicMockSession.create({
+      data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail,
+        selectedQuestionSetIds: quiz.studentSelectsSubjects ? questionSetCombination : [] },
     });
-    const attempt = await prisma.publicMockAttempt.create({
+    const attempt = await tx.publicMockAttempt.create({
       data: { sessionId: session.id, ...result, answers },
     });
-    const grade = await prisma.publicMockGrade.upsert({
+    const grade = await tx.publicMockGrade.upsert({
       where: { quizId_email: { quizId: quiz.id, email: normalizedEmail } },
       create: {
         quizId: quiz.id,
@@ -314,10 +306,7 @@ router.post("/:quizId/submit", async (req, res) => {
       },
       update: {},
     });
-    res.json({
-      success: true,
-      message: "Quiz submitted successfully",
-      submission: {
+    return {
         id: attempt.id,
         ...result,
         status: "auto-graded",
@@ -325,8 +314,9 @@ router.post("/:quizId/submit", async (req, res) => {
         totalQuestions: questions.length,
         countsForGrade: grade.attemptId === attempt.id,
         gradedScore: grade.score,
-      },
+      };
     });
+    res.json({ success: true, message: 'Quiz submitted successfully', submission });
   } catch (error) {
     fail(res, error);
   }

@@ -2,8 +2,25 @@ const express = require("express");
 const router = express.Router();
 const { verifyAdmin } = require("../middleware/auth");
 const prisma = require("../utils/database");
+const { validateSubjectPool } = require('../utils/mock-subjects');
+const { quizDuration } = require('../utils/quiz-duration');
+const { lockQuiz, canEditQuestions } = require('../utils/quiz-editing');
 
 const badRequest = (message) => Object.assign(new Error(message), { statusCode: 400 });
+
+function settingsUpdate(quiz, settings = {}) {
+  const data = {};
+  const fields = ['title', 'coverImage', 'description', 'instructions', 'isQuizChallenge', 'isOpenQuiz',
+    'multipleAttempts', 'looseFocus', 'viewAnswer', 'viewResults', 'displayCalculator'];
+  for (const field of fields) if (settings[field] !== undefined) data[field] = settings[field];
+  if (settings.title !== undefined && (typeof settings.title !== 'string' || !settings.title.trim())) throw badRequest('Exam title is required');
+  if (settings.permitLoseFocus !== undefined) data.looseFocus = settings.permitLoseFocus;
+  if (settings.duration !== undefined) {
+    const duration = quizDuration({ hours: quiz.durationHours, minutes: quiz.durationMinutes, seconds: quiz.durationSeconds, ...settings.duration });
+    Object.assign(data, { durationHours: duration.hours, durationMinutes: duration.minutes, durationSeconds: duration.seconds });
+  }
+  return data;
+}
 
 function normalizeTopicSelections(value) {
   if (!Array.isArray(value) || value.length === 0) throw badRequest("topicSelections must contain at least one topic");
@@ -96,19 +113,24 @@ router.post("/", verifyAdmin, async (req, res) => {
     }
 
     const examType = settings.examType || "multi-subject";
+    const duration = quizDuration(settings.duration);
+    const studentSelectsSubjects = settings.studentSelectsSubjects === true;
+    if (!['single-subject', 'multi-subject'].includes(examType) || (studentSelectsSubjects && examType !== 'multi-subject')) {
+      return res.status(400).json({ success: false, message: 'Invalid exam type or subject selection mode' });
+    }
     const expectedCount = examType === "single-subject" ? 1 : 4;
     if (
       !questionSetCombination ||
       !Array.isArray(questionSetCombination) ||
-      questionSetCombination.length !== expectedCount
+      (studentSelectsSubjects ? questionSetCombination.length < 4 : questionSetCombination.length !== expectedCount)
     ) {
       return res.status(400).json({
         success: false,
-        message: `Exactly ${expectedCount} question set IDs are required`,
+        message: studentSelectsSubjects ? 'Include English and at least three other subjects' : `Exactly ${expectedCount} question set IDs are required`,
       });
     }
 
-    if (new Set(questionSetCombination).size !== expectedCount) {
+    if (new Set(questionSetCombination).size !== questionSetCombination.length) {
       return res.status(400).json({ success: false, message: "Cannot use the same question set multiple times" });
     }
 
@@ -127,12 +149,14 @@ router.post("/", verifyAdmin, async (req, res) => {
       },
     });
 
-    if (questionSets.length !== expectedCount) {
+    if (questionSets.length !== questionSetCombination.length) {
       return res.status(400).json({
         success: false,
         message: "One or more question sets not found or inactive",
       });
     }
+
+    if (studentSelectsSubjects) validateSubjectPool(questionSets);
 
     // Filter questions based on provided criteria
     const quizQuestionSets = await Promise.all(
@@ -145,6 +169,9 @@ router.post("/", verifyAdmin, async (req, res) => {
 
         // Get filter for this question set (if provided)
         const filter = questionFilters?.[index] || questionFilters?.[setId];
+        if (studentSelectsSubjects && !filter?.topicSelections?.length) {
+          throw badRequest(`Select at least one topic for ${questionSet.title}`);
+        }
 
         const { questions: questionsToInclude, topicSelections } = selectQuestions(questionSet, filter);
 
@@ -180,15 +207,16 @@ router.post("/", verifyAdmin, async (req, res) => {
     const quiz = await prisma.quiz.create({
       data: {
         examType,
+        studentSelectsSubjects,
         title: settings.title,
         coverImage: settings.coverImage || null,
         isQuizChallenge: settings.isQuizChallenge || false,
         isOpenQuiz: settings.isOpenQuiz || false,
         description: settings.description || null,
         instructions: settings.instructions || null,
-        durationHours: settings.duration?.hours || 0,
-        durationMinutes: settings.duration?.minutes || 30,
-        durationSeconds: settings.duration?.seconds || 0,
+        durationHours: duration.hours,
+        durationMinutes: duration.minutes,
+        durationSeconds: duration.seconds,
         multipleAttempts: settings.multipleAttempts || false,
         looseFocus: settings.permitLoseFocus || false,
         viewAnswer: settings.viewAnswer !== undefined ? settings.viewAnswer : true,
@@ -240,7 +268,7 @@ router.post("/", verifyAdmin, async (req, res) => {
     console.error("Error creating quiz:", error);
     res.status(error.statusCode || 500).json({
       success: false,
-      message: "Server error",
+      message: error.statusCode ? error.message : "Server error",
       error: error.message,
     });
   }
@@ -445,6 +473,7 @@ router.get("/slim", verifyAdmin, async (req, res) => {
         isQuizChallenge: true,
         isOpenQuiz: true,
         examType: true,
+        studentSelectsSubjects: true,
         questionSets: { select: { questionSetId: true }, orderBy: { orderNum: "asc" } },
       },
     });
@@ -460,6 +489,7 @@ router.get("/slim", verifyAdmin, async (req, res) => {
           isQuizChallenge: quiz.isQuizChallenge,
           isOpenQuiz: quiz.isOpenQuiz,
           examType: quiz.examType,
+          studentSelectsSubjects: quiz.studentSelectsSubjects,
         },
         questionSetCombination: quiz.questionSets.map(({ questionSetId }) => questionSetId),
       })),
@@ -481,7 +511,7 @@ router.get("/by-combination/:setId1/:setId2/:setId3/:setId4", verifyAdmin, async
       },
       include: { createdBy: { select: { email: true } }, questionSets: { include: { questionSet: { select: { title: true } } } } },
     });
-    const exactMatches = quizzes.filter((quiz) => quiz.questionSets.length === 4);
+    const exactMatches = quizzes.filter((quiz) => quiz.studentSelectsSubjects || quiz.questionSets.length === 4);
     res.json({ success: true, count: exactMatches.length, quizzes: exactMatches });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error", error: error.message });
@@ -498,11 +528,8 @@ router.get("/:id", verifyAdmin, async (req, res) => {
       include: {
         createdBy: { select: { email: true } },
         questionSets: {
-          select: {
-            questionSetId: true,
-            title: true,
-            totalPoints: true,
-          },
+          orderBy: { orderNum: 'asc' },
+          include: { questions: { orderBy: { orderNum: 'asc' } }, topicSelections: true },
         },
       },
     });
@@ -516,7 +543,22 @@ router.get("/:id", verifyAdmin, async (req, res) => {
 
     res.json({
       success: true,
-      quiz,
+      quiz: {
+        ...quiz,
+        _id: quiz.id,
+        canEditQuestions: await canEditQuestions(prisma, quiz.id),
+        settings: {
+          title: quiz.title, coverImage: quiz.coverImage || '', description: quiz.description || '', instructions: quiz.instructions || '',
+          isQuizChallenge: quiz.isQuizChallenge, isOpenQuiz: quiz.isOpenQuiz, examType: quiz.examType,
+          studentSelectsSubjects: quiz.studentSelectsSubjects,
+          duration: { hours: quiz.durationHours, minutes: quiz.durationMinutes, seconds: quiz.durationSeconds },
+          multipleAttempts: quiz.multipleAttempts, looseFocus: quiz.looseFocus, viewAnswer: quiz.viewAnswer,
+          viewResults: quiz.viewResults, displayCalculator: quiz.displayCalculator,
+        },
+        questionSetCombination: quiz.questionSets.map((set) => set.questionSetId),
+        questionSets: quiz.questionSets.map((set) => ({ ...set, order: set.orderNum,
+          questions: set.questions.map((question) => ({ ...question, order: question.orderNum })) })),
+      },
     });
   } catch (error) {
     console.error("Error fetching quiz:", error);
@@ -547,27 +589,7 @@ router.put("/:id", verifyAdmin, async (req, res) => {
     }
 
     // Build update data object
-    const updateData = {};
-    
-    if (settings) {
-      if (settings.title !== undefined) updateData.title = settings.title;
-      if (settings.coverImage !== undefined) updateData.coverImage = settings.coverImage;
-      if (settings.description !== undefined) updateData.description = settings.description;
-      if (settings.instructions !== undefined) updateData.instructions = settings.instructions;
-      if (settings.isQuizChallenge !== undefined) updateData.isQuizChallenge = settings.isQuizChallenge;
-      if (settings.isOpenQuiz !== undefined) updateData.isOpenQuiz = settings.isOpenQuiz;
-      if (settings.multipleAttempts !== undefined) updateData.multipleAttempts = settings.multipleAttempts;
-      if (settings.looseFocus !== undefined) updateData.looseFocus = settings.looseFocus;
-      if (settings.viewAnswer !== undefined) updateData.viewAnswer = settings.viewAnswer;
-      if (settings.viewResults !== undefined) updateData.viewResults = settings.viewResults;
-      if (settings.displayCalculator !== undefined) updateData.displayCalculator = settings.displayCalculator;
-      
-      if (settings.duration) {
-        if (settings.duration.hours !== undefined) updateData.durationHours = settings.duration.hours;
-        if (settings.duration.minutes !== undefined) updateData.durationMinutes = settings.duration.minutes;
-        if (settings.duration.seconds !== undefined) updateData.durationSeconds = settings.duration.seconds;
-      }
-    }
+    const updateData = settingsUpdate(quiz, settings);
     
     if (isActive !== undefined) {
       updateData.isActive = isActive;
@@ -594,9 +616,9 @@ router.put("/:id", verifyAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("Error updating quiz:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Server error",
+      message: error.statusCode ? error.message : "Server error",
       error: error.message,
     });
   }
@@ -607,7 +629,7 @@ router.put("/:id", verifyAdmin, async (req, res) => {
 // @access  Private (Admin only)
 router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
   try {
-    const { questionSetIds, questionFilters } = req.body;
+    const { questionSetIds, questionFilters, settings } = req.body;
 
     if (
       !questionSetIds ||
@@ -632,8 +654,8 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
     }
 
     const expectedCount = quiz.examType === "single-subject" ? 1 : 4;
-    if (questionSetIds.length !== expectedCount || new Set(questionSetIds).size !== expectedCount) {
-      return res.status(400).json({ success: false, message: `Exactly ${expectedCount} distinct question set IDs are required` });
+    if ((quiz.studentSelectsSubjects ? questionSetIds.length < 4 : questionSetIds.length !== expectedCount) || new Set(questionSetIds).size !== questionSetIds.length) {
+      return res.status(400).json({ success: false, message: quiz.studentSelectsSubjects ? 'Include English and at least three distinct subjects' : `Exactly ${expectedCount} distinct question set IDs are required` });
     }
 
     // Fetch all question sets
@@ -652,12 +674,15 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
       }
     });
 
-    if (questionSets.length !== expectedCount) {
+    if (questionSets.length !== questionSetIds.length) {
       return res.status(400).json({
         success: false,
         message: "One or more question sets not found or inactive",
       });
     }
+
+    if (quiz.studentSelectsSubjects) validateSubjectPool(questionSets);
+    const updateData = settingsUpdate(quiz, settings);
 
     // Create new quiz question sets with snapshots
     const quizQuestionSets = questionSetIds.map((setId, index) => {
@@ -668,6 +693,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
       }
 
       const filter = questionFilters?.[index] || questionFilters?.[setId];
+      if (quiz.studentSelectsSubjects && !filter?.topicSelections?.length) throw badRequest(`Select at least one topic for ${questionSet.title}`);
       const { questions: selectedQuestions, topicSelections } = selectQuestions(questionSet, filter);
       const questions = selectedQuestions.map((q) => ({
         type: q.type,
@@ -699,6 +725,10 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
 
     // Use transaction to replace question sets atomically
     const updatedQuiz = await prisma.$transaction(async (tx) => {
+      await lockQuiz(tx, quiz.id);
+      if (!await canEditQuestions(tx, quiz.id)) {
+        throw Object.assign(new Error('Students have selected subjects or started this exam. Settings can still be edited; create a new exam to change its questions.'), { statusCode: 409 });
+      }
       // Delete existing quiz question sets (cascade will delete questions)
       await tx.quizQuestionSet.deleteMany({
         where: { quizId: req.params.id }
@@ -733,7 +763,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
         }
 
         await tx.quizQuestion.createMany({
-          data: questions.map(q => ({
+          data: questions.map((q, index) => ({
             quizQuestionSetId: quizQS.id,
             originalQuestionId: q.originalQuestionId,
             type: q.type,
@@ -744,7 +774,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
             options: q.options,
             correctAnswer: q.correctAnswer,
             points: q.points,
-            orderNum: q.orderNum,
+            orderNum: index + 1,
           }))
         });
       }
@@ -752,7 +782,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
       // Update quiz total points
       return tx.quiz.update({
         where: { id: req.params.id },
-        data: { totalPoints: newTotalPoints },
+        data: { ...updateData, totalPoints: newTotalPoints },
         include: {
           questionSets: {
             include: {
@@ -773,7 +803,7 @@ router.put("/:id/question-sets", verifyAdmin, async (req, res) => {
     console.error("Error updating quiz question sets:", error);
     res.status(error.statusCode || 500).json({
       success: false,
-      message: "Server error",
+      message: error.statusCode ? error.message : "Server error",
       error: error.message,
     });
   }

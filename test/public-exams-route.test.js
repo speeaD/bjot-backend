@@ -8,6 +8,7 @@ const quizzes = quizIds.map((id, index) => ({
   id,
   title: index ? 'New public mock' : 'Old public mock',
   viewResults: true,
+  isActive: true, isOpenQuiz: true,
   durationHours: 0,
   durationMinutes: 30,
   durationSeconds: 0,
@@ -28,12 +29,14 @@ test('public mocks list exam titles and start the selected exam when subjects ov
   const handlers = new Map();
   let selectedQuizId;
   require.cache[databasePath] = { id: databasePath, filename: databasePath, loaded: true, exports: {
-    quiz: { findMany: async () => quizzes },
+    quiz: { findMany: async () => quizzes, findUnique: async ({ where }) => quizzes.find((quiz) => quiz.id === where.id) },
     questionSet: {
       findMany: async () => setIds.map((id, index) => ({ id, title: `Subject ${index + 1}` })),
       count: async () => 4,
     },
     publicMockSession: { create: async ({ data }) => { selectedQuizId = data.quizId; return { id: 'session-id' }; } },
+    $queryRaw: async () => [],
+    $transaction: async (run) => run(require.cache[databasePath].exports),
   } };
   delete require.cache[routePath];
   Module._load = function(request, parent, isMain) {

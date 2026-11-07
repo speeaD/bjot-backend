@@ -26,7 +26,10 @@ const database = {
       ? { ...assignment, questionSetOrder: [...order], questionSetProgress: [...progress] } : null,
     update: async ({ data }) => { Object.assign(assignment, data); return assignment; },
   },
-  questionSetOrder: { findMany: async () => order },
+  questionSetOrder: { findMany: async () => order,
+    deleteMany: async () => { order = []; },
+    createMany: async ({ data }) => { order = data; },
+  },
   questionSetProgress: {
     createMany: async ({ data }) => {
       for (const row of data) {
@@ -60,6 +63,7 @@ const database = {
   questionSetSubmission: { upsert: async ({ create }) => { setSubmissions.push(create); } },
   quizTakenHistory: { create: async ({ data }) => { history.push(data); } },
   $queryRaw: async (parts, owner, id) => {
+    if (parts.join('').includes('FROM quizzes')) { assert.equal(owner, quizId); return [{ id: quizId }]; }
     assert.match(parts.join(''), /assigned_quizzes[\s\S]*FOR UPDATE/);
     assert.equal(owner, studentId);
     assert.equal(id, quizId);
@@ -81,10 +85,10 @@ test.beforeEach(() => {
   locks = 0; dashboardQuery = null; sequence = 1;
 });
 
-async function call(method, path, body = {}) {
+async function call(method, path, body = {}, params = {}) {
   const layer = router.stack.find((item) => item.route?.path === path && item.route.methods[method]);
   const response = { statusCode: 200, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
-  await layer.route.stack.at(-1).handle({ params: { quizId }, quizTaker: { id: studentId, accountType: 'premium' }, body }, response);
+  await layer.route.stack.at(-1).handle({ params: { quizId, ...params }, quizTaker: { id: studentId, accountType: 'premium' }, body }, response);
   return response;
 }
 const start = () => call('post', '/quiz/:quizId/start');
@@ -208,4 +212,68 @@ test('dashboard includes the current retake setting for the student action', asy
   assert.equal((await call('get', '/dashboard')).statusCode, 200);
   assert.equal(dashboardQuery.include.assignedQuizzes.include.quiz.select.multipleAttempts, true);
   assert.equal(dashboardQuery.include.assignedQuizzes.include.quiz.select.isActive, true);
+});
+
+function useSubjectPool() {
+  quiz.examType = 'multi-subject';
+  quiz.studentSelectsSubjects = true;
+  quiz.questionSets = ['English', 'Physics', 'Chemistry', 'Biology', 'Mathematics', 'Economics'].map((title, index) => ({
+    id: `set-${index + 1}`, questionSetId: `source-${index + 1}`, title, orderNum: index + 1, totalPoints: 2,
+    questions: [{ id: `question-${index + 1}`, type: 'multiple-choice', correctAnswer: 'Right', points: 2 }],
+  }));
+  quiz.totalPoints = 12;
+}
+const select = (questionSetOrder) => call('post', '/quiz/:quizId/set-question-order', { questionSetOrder });
+
+test('a pool mock requires English and three distinct available subjects before it can start', async () => {
+  useSubjectPool();
+  assert.equal((await start()).statusCode, 400);
+  for (const invalid of [[2, 3, 4, 5], [1, 2, 2, 3], [1, 2, 3], [1, 2, 3, 7], [1, 2, 3, 4, 5], ['1', 2, 3, 4]]) {
+    assert.equal((await select(invalid)).statusCode, 400);
+    assert.equal(order.length, 0);
+  }
+  assert.equal((await select([4, 1, 5, 3])).statusCode, 200);
+  assert.equal((await start()).statusCode, 200);
+  assert.deepEqual(progress.map((row) => row.questionSetOrder), [4, 1, 5, 3]);
+  assert.equal((await select([1, 2, 3, 4])).statusCode, 400, 'cannot swap subjects during an active attempt');
+  assert.equal((await call('get', '/quiz/:quizId/progress')).body.progress.overallProgress.total, 4);
+});
+
+test('pool grading uses only the chosen four subjects and rejects delivery or submission of other subjects', async () => {
+  useSubjectPool();
+  await select([1, 2, 3, 5]);
+  await start();
+  assert.equal((await submit(6, false)).statusCode, 400);
+  assert.equal((await call('get', '/quiz/:quizId/question-set/:questionSetOrder', {}, { questionSetOrder: '6' })).statusCode, 403);
+  for (const [index, value] of [1, 2, 3, 5].entries()) {
+    const response = await submit(value, index === 3);
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.body.submission.overallTotalPoints, 8);
+  }
+  assert.equal(submissions[0].percentage, 100);
+  assert.equal(submissions[0].totalPoints, 8);
+  assert.equal(history[0].totalPoints, 8);
+  assert.deepEqual(submissions[0].questionSetOrder.create.map((row) => row.orderValue), [1, 2, 3, 5]);
+  const details = await call('get', '/quiz/:quizId');
+  assert.equal(details.body.quiz.totalPoints, 8);
+});
+
+test('a resumed pool attempt keeps its choices; a permitted retake can choose a new combination without changing previous results', async () => {
+  useSubjectPool();
+  await select([1, 2, 3, 4]);
+  await start();
+  const firstStart = assignment.startedAt;
+  assert.deepEqual((await call('get', '/quiz/:quizId')).body.selectedQuestionSetOrder, [1, 2, 3, 4]);
+  await start();
+  assert.equal(assignment.startedAt, firstStart);
+  for (const value of [1, 2, 3, 4]) await submit(value, value === 4);
+  const originalSelection = submissions[0].questionSetOrder.create;
+  quiz.multipleAttempts = false;
+  assert.equal((await select([1, 3, 5, 6])).statusCode, 400);
+  quiz.multipleAttempts = true;
+  assert.equal((await select([1, 3, 5, 6])).statusCode, 200);
+  await start();
+  assert.deepEqual(order.map((row) => row.orderValue), [1, 3, 5, 6]);
+  assert.deepEqual(originalSelection.map((row) => row.orderValue), [1, 2, 3, 4]);
+  assert.equal(history.length, 1);
 });
