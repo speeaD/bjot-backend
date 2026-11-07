@@ -498,7 +498,9 @@ router.post('/quiz/:quizId/start', verifyQuizTaker, async (req, res) => {
       if (!quiz) throw new Error('Quiz not found');
       if (!quiz.isActive) return { inactive: true };
       if (assignment.status === 'completed' && !quiz.multipleAttempts) return { completed: true };
-      if (assignment.status === 'in-progress') return { alreadyStarted: true, startedAt: assignment.startedAt };
+      const durationSeconds = quiz.durationHours * 3600 + quiz.durationMinutes * 60 + quiz.durationSeconds;
+      if (assignment.status === 'in-progress') return { alreadyStarted: true, startedAt: assignment.startedAt,
+        remainingSeconds: Math.max(0, durationSeconds - Math.max(0, Math.floor((Date.now() - new Date(assignment.startedAt).getTime()) / 1000))) };
       if (assignment.status === 'completed') {
         // Progress belongs to the current attempt. Historical submissions and
         // results remain intact when an admin permits another attempt.
@@ -509,13 +511,13 @@ router.post('/quiz/:quizId/start', verifyQuizTaker, async (req, res) => {
       await tx.assignedQuiz.update({ where: { id: assignment.id }, data: {
         status: 'in-progress', startedAt: now, completedAt: null, currentQuestionSetOrder: order[0],
       } });
-      return { startedAt: now };
+      return { startedAt: now, remainingSeconds: durationSeconds };
     });
     if (!started) return res.status(403).json({ success: false, message: 'This quiz is not assigned to you' });
     if (started.inactive) return res.status(400).json({ success: false, message: 'This quiz is not currently active' });
     if (started.completed) return res.status(400).json({ success: false, message: 'You have already completed this quiz' });
-    if (started.alreadyStarted) return res.json({ success: true, message: 'Quiz already in progress', startedAt: started.startedAt });
-    res.json({ success: true, message: 'Quiz started successfully', startedAt: started.startedAt });
+    if (started.alreadyStarted) return res.json({ success: true, message: 'Quiz already in progress', startedAt: started.startedAt, remainingSeconds: started.remainingSeconds });
+    res.json({ success: true, message: 'Quiz started successfully', startedAt: started.startedAt, remainingSeconds: started.remainingSeconds });
   } catch (error) {
     res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'Server error', error: error.message });
   }
