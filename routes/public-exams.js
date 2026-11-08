@@ -4,7 +4,8 @@ const prisma = require('../utils/database');
 const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
 const { isEnglishSubject, matchesSubjects } = require('../utils/mock-subjects');
 const { lockQuiz } = require('../utils/quiz-editing');
-const { assertPublicMockRetakeAllowed, publicMockSubjects } = require('../utils/public-mock');
+const { assertPublicMockRetakeAllowed, assertPublicMockDevice, publicMockSubjects } = require('../utils/public-mock');
+const { ensurePublicMockDevice, requirePublicMockDevice } = require('../utils/public-mock-device');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -32,7 +33,7 @@ async function findOpenQuizzes() {
   return quizzes.filter(eligibleQuiz);
 }
 
-router.get('/question-sets', async (_req, res) => {
+router.get('/question-sets', async (req, res) => {
   try {
     const quizzes = await findOpenQuizzes();
     const ids = [...new Set(quizzes.flatMap((quiz) => quiz.questionSets.map((set) => set.questionSetId)))];
@@ -40,6 +41,7 @@ router.get('/question-sets', async (_req, res) => {
     const byId = new Map(sets.map((set) => [set.id, set]));
     const setStats = new Map(quizzes.flatMap((quiz) => quiz.questionSets.map((set) => [set.questionSetId, { questionCount: set.questions.length, totalPoints: set.totalPoints }])));
     const available = quizzes.filter((quiz) => quiz.questionSets.every((set) => byId.has(set.questionSetId)));
+    ensurePublicMockDevice(req, res);
     res.json({ success: true, questionSets: ids.filter((id) => byId.has(id)).map((id) => ({ _id: id, title: byId.get(id).title, ...setStats.get(id) })),
       availableCombinations: available.filter((quiz) => !quiz.studentSelectsSubjects).map((quiz) => quiz.questionSets.map((set) => set.questionSetId)),
       mocks: available.map((quiz) => ({ id: quiz.id, title: quiz.title,
@@ -64,6 +66,7 @@ router.post('/mock/sessions', async (req, res) => {
     if (body.quizId !== undefined && (typeof body.quizId !== 'string' || !UUID.test(body.quizId))) {
       return res.status(400).json({ success: false, message: 'Choose a valid free mock' });
     }
+    const deviceHash = requirePublicMockDevice(req);
     const quizzes = await findOpenQuizzes();
     const quiz = quizzes.find((item) => (!body.quizId || item.id === body.quizId) && matchesSubjects(item, ids));
     if (!quiz) return res.status(404).json({ success: false, message: 'No free mock is available for this subject combination' });
@@ -75,11 +78,20 @@ router.post('/mock/sessions', async (req, res) => {
       if (!current?.isActive || !current.isOpenQuiz || !eligibleQuiz(current) || !matchesSubjects(current, ids)) {
         throw Object.assign(new Error('This mock has changed. Choose your subjects again.'), { statusCode: 409 });
       }
-      await assertPublicMockRetakeAllowed(tx, current, email);
-      const latest = await tx.publicMockSession.findFirst({ where: { quizId: current.id, email },
+      await assertPublicMockRetakeAllowed(tx, current, email, deviceHash);
+      const activeDeviceSession = await tx.publicMockSession.findFirst({ where: { quizId: current.id, deviceHash, attempt: { is: null } } });
+      if (activeDeviceSession && activeDeviceSession.email !== email) {
+        throw Object.assign(new Error('This device already has an unfinished attempt for this mock. Continue using the original email.'), { statusCode: 403 });
+      }
+      const latest = activeDeviceSession || await tx.publicMockSession.findFirst({ where: { quizId: current.id, email },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], include: { attempt: true } });
-      const saved = latest && !latest.attempt ? latest : await tx.publicMockSession.create({
-        data: { quizId: current.id, name, email, selectedQuestionSetIds: ids } });
+      let saved;
+      if (latest && !latest.attempt) {
+        assertPublicMockDevice(latest, deviceHash);
+        saved = latest.deviceHash ? latest : await tx.publicMockSession.update({ where: { id: latest.id }, data: { deviceHash } });
+      } else {
+        saved = await tx.publicMockSession.create({ data: { quizId: current.id, name, email, deviceHash, selectedQuestionSetIds: ids } });
+      }
       const chosenSets = publicMockSubjects({ ...saved, quiz: current });
       const durationSeconds = current.durationHours * 3600 + current.durationMinutes * 60 + current.durationSeconds;
       return { id: saved.id, quizId: current.id, title: current.title,
@@ -96,6 +108,7 @@ router.post('/mock/sessions', async (req, res) => {
 router.post('/mock/sessions/:id/submit', async (req, res) => {
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid session' });
+    const deviceHash = requirePublicMockDevice(req);
     const session = await prisma.publicMockSession.findUnique({ where: { id: req.params.id }, select: { id: true, quizId: true } });
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
     const result = await prisma.$transaction(async (tx) => {
@@ -103,15 +116,17 @@ router.post('/mock/sessions/:id/submit', async (req, res) => {
       // Re-read after locking: concurrent submissions and starts share this lock.
       const current = await tx.publicMockSession.findUnique({ where: { id: session.id }, include: { attempt: true, quiz: { include: quizInclude } } });
       if (!current) throw Object.assign(new Error('Session not found'), { statusCode: 404 });
+      assertPublicMockDevice(current, deviceHash);
       const questions = publicMockSubjects(current).flatMap((set) => set.questions);
       const ids = new Set(questions.map((question) => question.id));
       if (!validateAnswers(req.body?.answers, ids)) throw Object.assign(new Error('Answers contain invalid question IDs or values'), { statusCode: 400 });
       let attempt = current.attempt;
       if (!attempt) {
-        await assertPublicMockRetakeAllowed(tx, current.quiz, current.email);
+        await assertPublicMockRetakeAllowed(tx, current.quiz, current.email, deviceHash);
         const result = gradeQuestions(questions, req.body.answers);
         attempt = await tx.publicMockAttempt.create({ data: { sessionId: current.id, ...result, answers: req.body.answers } });
       }
+      if (!current.deviceHash) await tx.publicMockSession.update({ where: { id: current.id }, data: { deviceHash } });
       const grade = await tx.publicMockGrade.upsert({ where: { quizId_email: { quizId: current.quizId, email: current.email } },
         create: { quizId: current.quizId, email: current.email, attemptId: attempt.id,
           score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.percentage }, update: {} });

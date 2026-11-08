@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
+const { deviceHeaders } = require('./helpers/public-device');
 
 const setIds = [1, 2, 3, 4].map((n) => `00000000-0000-4000-8000-00000000000${n}`);
 const quizIds = [1, 2].map((n) => `10000000-0000-4000-8000-00000000000${n}`);
@@ -50,7 +51,7 @@ test('public mocks list exam titles and start the selected exam when subjects ov
     require('../routes/public-exams');
     const invoke = async (method, path, body) => {
       const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(data) { this.data = data; return this; } };
-      await handlers.get(`${method} ${path}`)({ body }, response);
+      await handlers.get(`${method} ${path}`)({ body, headers: deviceHeaders() }, response);
       return response;
     };
     const listed = (await invoke('GET', '/question-sets')).data;

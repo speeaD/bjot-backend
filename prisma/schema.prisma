@@ -397,12 +397,14 @@ model PublicMockSession {
   quizId      String    @map("quiz_id") @db.Uuid
   name        String    @db.VarChar(255)
   email       String    @db.VarChar(255)
+  deviceHash  String?   @map("device_hash") @db.VarChar(64)
   selectedQuestionSetIds String[] @default([]) @map("selected_question_set_ids") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at")
   attempt     PublicMockAttempt?
   quiz        Quiz      @relation(fields: [quizId], references: [id], onDelete: Restrict)
 
   @@index([quizId, email])
+  @@index([quizId, deviceHash])
   @@map("public_mock_sessions")
 }
 

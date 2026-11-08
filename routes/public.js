@@ -3,6 +3,7 @@ const router = express.Router();
 const prisma = require("../utils/database");
 const { lockQuiz } = require('../utils/quiz-editing');
 const { assertPublicMockRetakeAllowed, publicMockSubjects } = require('../utils/public-mock');
+const { ensurePublicMockDevice, requirePublicMockDevice } = require('../utils/public-mock-device');
 const { isEnglishSubject, selectedSubjects, matchesSubjects } = require('../utils/mock-subjects');
 const {
   AUTO_GRADED_TYPES,
@@ -63,6 +64,7 @@ router.post("/available", async (req, res) => {
       (quiz) =>
         available(quiz) && matchesSubjects(quiz, ids),
     );
+    ensurePublicMockDevice(req, res);
     res.json({
       success: true,
       count: matches.length,
@@ -180,6 +182,7 @@ router.get("/:quizId", async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Open quiz not found" });
+    ensurePublicMockDevice(req, res);
     res.json({
       success: true,
       quiz: {
@@ -276,6 +279,7 @@ router.post("/:quizId/submit", async (req, res) => {
           message: "Enter a name, valid email, and four different subjects",
         });
     }
+    const deviceHash = requirePublicMockDevice(req);
     const submission = await prisma.$transaction(async (tx) => {
     await lockQuiz(tx, req.params.quizId);
     const quiz = await tx.quiz.findUnique({
@@ -294,9 +298,9 @@ router.post("/:quizId/submit", async (req, res) => {
       throw Object.assign(new Error('Invalid answers'), { statusCode: 400 });
     const result = gradeQuestions(questions, answers);
     const normalizedEmail = email.trim().toLowerCase();
-    await assertPublicMockRetakeAllowed(tx, quiz, normalizedEmail);
+    await assertPublicMockRetakeAllowed(tx, quiz, normalizedEmail, deviceHash);
     const session = await tx.publicMockSession.create({
-      data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail,
+      data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail, deviceHash,
         selectedQuestionSetIds: quiz.studentSelectsSubjects ? questionSetCombination : [] },
     });
     const attempt = await tx.publicMockAttempt.create({

@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { selectedSubjects, sessionSubjects, matchesSubjects, isEnglishSubject } = require('../utils/mock-subjects');
+const { deviceHeaders } = require('./helpers/public-device');
 
 const ids = Array.from({ length: 6 }, (_, index) => `00000000-0000-4000-8000-00000000000${index + 1}`);
 const quiz = { id: '10000000-0000-4000-8000-000000000001', title: 'All-subject mock', isActive: true, isOpenQuiz: true,
@@ -33,7 +34,7 @@ const db = {
   quiz: { findMany: async () => [quiz], findUnique: async () => quiz },
   questionSet: { findMany: async () => quiz.questionSets.map((set) => ({ id: set.questionSetId, title: set.title })), count: async () => 4 },
   publicMockSession: {
-    findFirst: async () => session ? { ...session, attempt } : null,
+    findFirst: async ({ where }) => session && (!where.attempt || ('isNot' in where.attempt ? !!attempt : !attempt)) ? { ...session, attempt } : null,
     create: async ({ data }) => { session = { id: '30000000-0000-4000-8000-000000000001', createdAt: new Date(), ...data, quiz }; attempt = null; return session; },
     findUnique: async () => ({ ...session, attempt }),
   },
@@ -49,7 +50,7 @@ const router = require('../routes/public-exams');
 async function invoke(method, path, body = {}, params = {}) {
   const route = router.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]).route;
   const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; return this; } };
-  await route.stack.at(-1).handle({ body, params }, res);
+  await route.stack.at(-1).handle({ body, params, headers: deviceHeaders() }, res);
   return res;
 }
 

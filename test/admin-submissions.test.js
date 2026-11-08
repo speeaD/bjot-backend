@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { listAdminSubmissions } = require('../utils/admin-submissions');
+const { deviceHeaders } = require('./helpers/public-device');
 const uuid = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 const quiz = { id: uuid(1), title: 'Free public mock', isActive: true, isOpenQuiz: true, viewResults: true,
   multipleAttempts: true,
@@ -30,8 +31,9 @@ const database = {
   },
   publicMockSession: {
     findFirst: async ({ where }) => {
-      const row = sessions.filter((item) => item.quizId === where.quizId && item.email === where.email)
-        .findLast((item) => !where.attempt || attempts.some((attempt) => attempt.sessionId === item.id));
+      const row = sessions.filter((item) => item.quizId === where.quizId && (!where.email || item.email === where.email) &&
+        (!where.deviceHash || item.deviceHash === where.deviceHash))
+        .findLast((item) => !where.attempt || (where.attempt.isNot !== undefined) === attempts.some((attempt) => attempt.sessionId === item.id));
       return row ? { ...row, attempt: attempts.find((item) => item.sessionId === row.id) || null } : null;
     },
     create: async ({ data }) => { const row = { id: uuid(sequence++), createdAt: new Date(), ...data, quiz }; sessions.push(row); return row; },
@@ -82,7 +84,7 @@ async function call(router, method, path, { body = {}, query = {}, params = {} }
   const route = router.stack.find((row) => row.route?.path === path && row.route.methods[method]).route;
   const response = { statusCode: 200, headers: {}, status(value) { this.statusCode = value; return this; },
     set(key, value) { this.headers[key] = value; return this; }, json(value) { this.body = value; return this; } };
-  await route.stack.at(-1).handle({ body, query, params }, response);
+  await route.stack.at(-1).handle({ body, query, params, headers: deviceHeaders() }, response);
   return response;
 }
 const list = (query = {}) => call(adminRouter, 'get', '/submissions', { query });

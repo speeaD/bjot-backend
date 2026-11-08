@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { orderedQuestions } = require('../utils/question-order');
+const { deviceHeaders, headersForDevice } = require('./helpers/public-device');
+const { requirePublicMockDevice } = require('../utils/public-mock-device');
 
 const uuid = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 let quiz;
@@ -11,18 +13,24 @@ let sequence;
 let locks;
 let transactionQueue = Promise.resolve();
 const hydrated = (session) => session && ({ ...session, quiz, attempt: attempts.find((attempt) => attempt.sessionId === session.id) || null });
+function matchesSession(session, where) {
+  const hasAttempt = attempts.some((attempt) => attempt.sessionId === session.id);
+  return (!where.quizId || session.quizId === where.quizId) && (!where.email || session.email === where.email) &&
+    (!where.deviceHash || session.deviceHash === where.deviceHash) && (!where.OR || where.OR.some((filter) => matchesSession(session, filter))) &&
+    (!where.attempt || ('isNot' in where.attempt ? hasAttempt : !hasAttempt));
+}
 const db = {
   quiz: { findMany: async () => [quiz], findUnique: async () => quiz },
   questionSet: { count: async () => 4, findMany: async () => quiz.questionSets.map((set) => ({ id: set.questionSetId, title: set.title })) },
   publicMockSession: {
-    findFirst: async ({ where }) => hydrated(sessions.findLast((session) => session.quizId === where.quizId && session.email === where.email &&
-      (!where.attempt || attempts.some((attempt) => attempt.sessionId === session.id)))),
+    findFirst: async ({ where }) => hydrated(sessions.findLast((session) => matchesSession(session, where))),
     findUnique: async ({ where }) => hydrated(sessions.find((session) => session.id === where.id)),
     create: async ({ data }) => {
       const session = { id: uuid(sequence++), createdAt: new Date(), ...data };
       sessions.push(session);
       return session;
     },
+    update: async ({ where, data }) => Object.assign(sessions.find((session) => session.id === where.id), data),
   },
   publicMockAttempt: { create: async ({ data }) => {
     assert(!attempts.some((attempt) => attempt.sessionId === data.sessionId), 'one attempt per session');
@@ -60,19 +68,20 @@ test.beforeEach(() => {
   sessions = []; attempts = []; grades = []; sequence = 1000; locks = 0;
 });
 
-async function call(target, method, path, body, params = {}) {
+async function call(target, method, path, body, params = {}, headers = deviceHeaders()) {
   const route = target.stack.find((layer) => layer.route?.path === path && layer.route.methods[method]).route;
-  const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
-  await route.stack.at(-1).handle({ body, params }, res);
+  const res = { statusCode: 200, cookies: [], cookie(...cookie) { this.cookies.push(cookie); return this; },
+    status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+  await route.stack.at(-1).handle({ body, params, headers }, res);
   return res;
 }
-const start = (email = 'Student@Example.com', ids = quiz.questionSets.map((set) => set.questionSetId)) => call(router, 'post', '/mock/sessions', {
+const start = (email = 'Student@Example.com', ids = quiz.questionSets.map((set) => set.questionSetId), headers = deviceHeaders(email.trim().toLowerCase())) => call(router, 'post', '/mock/sessions', {
   name: 'Student', email, quizId: quiz.id, questionSetIds: ids,
-});
-const submit = (id, answers = []) => call(router, 'post', '/mock/sessions/:id/submit', { answers }, { id });
-const legacySubmit = (email = 'student@example.com') => call(legacyRouter, 'post', '/:quizId/submit', {
+}, {}, headers);
+const submit = (id, answers = [], headers = headersForDevice(sessions.find((session) => session.id === id)?.deviceHash)) => call(router, 'post', '/mock/sessions/:id/submit', { answers }, { id }, headers);
+const legacySubmit = (email = 'student@example.com', headers = deviceHeaders(email.trim().toLowerCase())) => call(legacyRouter, 'post', '/:quizId/submit', {
   name: 'Student', email, questionSetCombination: quiz.questionSets.map((set) => set.questionSetId), answers: [],
-}, { quizId: quiz.id });
+}, { quizId: quiz.id }, headers);
 
 test('listing and session responses preserve both admin settings in either state', async () => {
   for (const enabled of [false, true]) {
@@ -176,4 +185,93 @@ test('question permutations depend on the attempt and do not mutate or drop any 
   assert.equal(new Set(first.map((q) => q.id)).size, questions.length);
   assert.deepEqual(orderedQuestions([], 'empty'), []);
   assert.deepEqual(orderedQuestions([questions[0]], 'single'), [questions[0]]);
+});
+
+test('changing email on a completed device is blocked through both public APIs, but another device and email may take it', async () => {
+  const browser = deviceHeaders('shared-device');
+  const first = (await start('first@example.com', undefined, browser)).body.session;
+  assert.equal((await submit(first.id, [], browser)).statusCode, 200);
+  for (const blocked of [await start('second@example.com', undefined, browser), await legacySubmit('third@example.com', browser)]) {
+    assert.equal(blocked.statusCode, 403);
+    assert.match(blocked.body.message, /This device has already completed/);
+  }
+  assert.equal(sessions.length, 1);
+  assert.equal(attempts.length, 1);
+  assert.equal((await start('first@example.com', undefined, deviceHeaders('other-device'))).statusCode, 403, 'email limit still applies across devices');
+  assert.equal((await start('new@example.com', undefined, deviceHeaders('other-device'))).statusCode, 201);
+  quiz.multipleAttempts = true;
+  const permitted = await start('second@example.com', undefined, browser);
+  assert.equal(permitted.statusCode, 201, 'admin can still enable public retakes');
+  assert.equal((await submit(permitted.body.session.id, [], browser)).statusCode, 200);
+});
+
+test('a legacy attempt reserves its device against later submissions and modern starts with different emails', async () => {
+  const browser = deviceHeaders('legacy-device');
+  assert.equal((await legacySubmit('legacy@example.com', browser)).statusCode, 200);
+  assert.equal((await legacySubmit('changed@example.com', browser)).statusCode, 403);
+  assert.equal((await start('changed@example.com', undefined, browser)).statusCode, 403);
+  assert.equal(attempts.length, 1);
+});
+
+test('another browser cannot resume, submit or replay an attempt bound to the starting browser', async () => {
+  const owner = deviceHeaders('owner-device');
+  const other = deviceHeaders('intruder-device');
+  const first = (await start('owner@example.com', undefined, owner)).body.session;
+  assert.equal((await start('owner@example.com', undefined, other)).statusCode, 403);
+  assert.equal((await submit(first.id, [], other)).statusCode, 403);
+  assert.equal(attempts.length, 0);
+  assert.equal((await submit(first.id, [], owner)).statusCode, 200);
+  assert.equal((await submit(first.id, [], owner)).statusCode, 200, 'owner retry remains idempotent');
+  assert.equal((await submit(first.id, [], other)).statusCode, 403);
+});
+
+test('concurrent starts with different emails cannot reserve two attempts on the same device', async () => {
+  const browser = deviceHeaders('concurrent-device');
+  const responses = await Promise.all([start('first@example.com', undefined, browser), start('second@example.com', undefined, browser)]);
+  assert.deepEqual(responses.map((response) => response.statusCode), [201, 403]);
+  assert.equal(sessions.length, 1);
+  assert.match(responses[1].body.message, /unfinished attempt/);
+  assert.equal((await start('first@example.com', undefined, browser)).body.session.id, responses[0].body.session.id);
+  const spare = { ...sessions[0], id: uuid(sequence++), email: 'preexisting@example.com' };
+  sessions.push(spare);
+  const submitted = await Promise.all([submit(sessions[0].id, [], browser), submit(spare.id, [], browser)]);
+  assert.deepEqual(submitted.map((response) => response.statusCode), [200, 403]);
+  assert.equal(attempts.length, 1);
+});
+
+test('device limits apply to each mock separately', async () => {
+  const browser = deviceHeaders('multiple-mocks');
+  const first = (await start('student@example.com', undefined, browser)).body.session;
+  await submit(first.id, [], browser);
+  quiz = { ...quiz, id: uuid(2) };
+  assert.equal((await start('student@example.com', undefined, browser)).statusCode, 201);
+});
+
+test('old sessions bind when resumed or submitted without changing their paper or result', async () => {
+  const browser = deviceHeaders('migration-browser');
+  const old = { id: uuid(sequence++), quizId: quiz.id, email: 'old@example.com', name: 'Student', deviceHash: null,
+    selectedQuestionSetIds: quiz.questionSets.map((set) => set.questionSetId), createdAt: new Date() };
+  sessions.push(old);
+  const resumed = await start('old@example.com', undefined, browser);
+  assert.equal(resumed.body.session.id, old.id);
+  assert.equal(old.deviceHash, requirePublicMockDevice({ headers: browser }));
+  await submit(old.id, [], browser);
+  old.deviceHash = null; // A historical completed result from before this rollout.
+  const replay = await submit(old.id, [], browser);
+  assert.equal(replay.statusCode, 200);
+  assert.equal(attempts.length, 1);
+  assert.equal(old.deviceHash, requirePublicMockDevice({ headers: browser }));
+  assert.equal((await start('another@example.com', undefined, browser)).statusCode, 403);
+});
+
+test('missing device cookies cannot bypass enforcement, and the listing bootstraps a signed cookie', async () => {
+  const browser = deviceHeaders('cookie-check');
+  assert.equal((await start('student@example.com', undefined, {})).statusCode, 428);
+  assert.equal((await legacySubmit('student@example.com', {})).statusCode, 428);
+  const first = (await start('student@example.com', undefined, browser)).body.session;
+  assert.equal((await submit(first.id, [], {})).statusCode, 428);
+  assert.equal(attempts.length, 0);
+  const registered = await call(router, 'get', '/question-sets', undefined, {}, {});
+  assert.equal(registered.statusCode, 200);
+  assert.equal(registered.cookies[0][0], 'bjot_public_mock_device');
 });
