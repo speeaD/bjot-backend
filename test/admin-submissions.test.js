@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { listAdminSubmissions } = require('../utils/admin-submissions');
 const uuid = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 const quiz = { id: uuid(1), title: 'Free public mock', isActive: true, isOpenQuiz: true, viewResults: true,
+  multipleAttempts: true,
   viewAnswer: true, examType: 'multi-subject', durationHours: 0, durationMinutes: 30, durationSeconds: 0,
   questionSets: Array.from({ length: 4 }, (_, i) => ({ questionSetId: uuid(i + 10), title: `Subject ${i + 1}`,
     orderNum: i + 1, totalPoints: 1, questions: [{ id: uuid(i + 20), type: 'multiple-choice', question: 'Pick the right option',
@@ -28,6 +29,11 @@ const database = {
     findUnique: async ({ where }) => assigned.find((row) => row.id === where.id) || null,
   },
   publicMockSession: {
+    findFirst: async ({ where }) => {
+      const row = sessions.filter((item) => item.quizId === where.quizId && item.email === where.email)
+        .findLast((item) => !where.attempt || attempts.some((attempt) => attempt.sessionId === item.id));
+      return row ? { ...row, attempt: attempts.find((item) => item.sessionId === row.id) || null } : null;
+    },
     create: async ({ data }) => { const row = { id: uuid(sequence++), createdAt: new Date(), ...data, quiz }; sessions.push(row); return row; },
     findUnique: async ({ where }) => {
       const row = sessions.find((item) => item.id === where.id);

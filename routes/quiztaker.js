@@ -6,6 +6,7 @@ const { subscriptionFor } = require('../utils/subscriptions');
 const { calculateStreak } = require('../utils/streak');
 const { selectedSubjects, selectionError } = require('../utils/mock-subjects');
 const { lockQuiz } = require('../utils/quiz-editing');
+const { orderedQuestions } = require('../utils/question-order');
 
 router.use(['/quiz', '/submission'], verifyQuizTaker, (req, res, next) => {
   if (req.quizTaker.accountType !== 'premium') {
@@ -327,7 +328,8 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
       });
     }
 
-    const questionsWithoutAnswers = questionSet.questions.map((q) => ({
+    const seed = JSON.stringify([assignedQuiz.id, assignedQuiz.startedAt]);
+    const questionsWithoutAnswers = orderedQuestions(questionSet.questions, seed).map((q, index) => ({
       id: q.id,
       type: q.type,
       question: q.question,
@@ -336,7 +338,7 @@ router.get("/quiz/:quizId/question-set/:questionSetOrder", verifyQuizTaker, asyn
       diagramAlt: q.diagramAlt,
       options: q.options,
       points: q.points,
-      order: q.orderNum,
+      order: index + 1,
     }));
 
     res.json({

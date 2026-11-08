@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const prisma = require("../utils/database");
 const { lockQuiz } = require('../utils/quiz-editing');
-const { isEnglishSubject, selectedSubjects, matchesSubjects, sessionSubjects } = require('../utils/mock-subjects');
+const { assertPublicMockRetakeAllowed, publicMockSubjects } = require('../utils/public-mock');
+const { isEnglishSubject, selectedSubjects, matchesSubjects } = require('../utils/mock-subjects');
 const {
   AUTO_GRADED_TYPES,
   publicQuestion,
@@ -71,6 +72,8 @@ router.post("/available", async (req, res) => {
           title: quiz.title,
           description: quiz.description,
           coverImage: quiz.coverImage,
+          multipleAttempts: quiz.multipleAttempts === true,
+          looseFocus: quiz.looseFocus === true,
           duration: {
             hours: quiz.durationHours,
             minutes: quiz.durationMinutes,
@@ -124,7 +127,7 @@ router.get("/submission/:id", async (req, res) => {
       const answers = new Map(
         attempt.answers.map((item) => [item.questionId, item.answer]),
       );
-      submission.answersByQuestionSet = sessionSubjects(attempt.session).map(
+      submission.answersByQuestionSet = publicMockSubjects(attempt.session).map(
         (set) => ({
           questionSetTitle: set.title,
           order: set.orderNum,
@@ -192,6 +195,8 @@ router.get("/:quizId", async (req, res) => {
           },
           viewResults: quiz.viewResults,
           viewAnswer: quiz.viewAnswer,
+          multipleAttempts: quiz.multipleAttempts === true,
+          looseFocus: quiz.looseFocus === true,
         },
         totalPoints: quiz.totalPoints,
         questionSetCombination: quiz.questionSets.map((set) => ({
@@ -289,6 +294,7 @@ router.post("/:quizId/submit", async (req, res) => {
       throw Object.assign(new Error('Invalid answers'), { statusCode: 400 });
     const result = gradeQuestions(questions, answers);
     const normalizedEmail = email.trim().toLowerCase();
+    await assertPublicMockRetakeAllowed(tx, quiz, normalizedEmail);
     const session = await tx.publicMockSession.create({
       data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail,
         selectedQuestionSetIds: quiz.studentSelectsSubjects ? questionSetCombination : [] },

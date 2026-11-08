@@ -17,6 +17,6 @@ The exam detail page's Edit Exam action opens the same settings and topic builde
 
 Subject choices are locked after the attempt starts. Permitted retakes may select a different combination, and each assigned submission saves its own subject order. Public rankings retain the existing first-completed-score rule.
 
-Duration creation and editing preserve explicit zero minutes and seconds. Previously, the creation fallback added 30 minutes when minutes was zero, turning two hours into 150 minutes. Existing stored durations are not guessed or rewritten; admins can correct them through Edit Exam.
+Duration creation and editing preserve explicit zero minutes and seconds. Previously, the creation fallback added 30 minutes when minutes was zero, turning two hours into 150 minutes. Existing stored durations are not guessed or rewritten; admins can correct them through Edit Exam. Assigned starts and resumes return the remaining seconds calculated using server time, so the countdown does not depend on the student's device clock matching the server.
 
 Local verification: `node --test test/assigned-quiz.test.js test/mock-subjects.test.js test/quiz-question-selection.test.js test/quiz-editing.test.js test/quiz-duration.test.js test/quiz-duration-routes.test.js test/public-exams-route.test.js test/admin-submissions.test.js`, Prisma schema validation, and TypeScript/lint checks in both portals. Browser checks use local API fixtures with the real UI components. These checks never create live exams or submit student results.

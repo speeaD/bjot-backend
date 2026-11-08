@@ -77,7 +77,7 @@ require.cache[databasePath] = { id: databasePath, filename: databasePath, loaded
 const router = require('../routes/quiztaker');
 
 test.beforeEach(() => {
-  quiz = { id: quizId, title: 'Assigned mock', examType: 'single-subject', isActive: true,
+  quiz = { id: quizId, title: 'Assigned mock', examType: 'single-subject', isActive: true, durationHours: 2, durationMinutes: 0, durationSeconds: 0,
     multipleAttempts: true, looseFocus: false, totalPoints: 2, questionSets: [{ id: 'set-1', title: 'English',
       orderNum: 1, totalPoints: 2, questions: [{ id: 'question-1', type: 'multiple-choice', correctAnswer: 'Right', points: 2 }] }] };
   assignment = { id: 'assignment', quizTakerId: studentId, quizId, status: 'pending', startedAt: null, completedAt: null };
@@ -160,15 +160,19 @@ test('multi-subject retakes preserve the selected order and reset every subject'
 });
 
 test('resuming an active mock preserves its start time and completed subject progress', async () => {
-  await start();
-  const startedAt = assignment.startedAt;
+  assert.equal((await start()).body.remainingSeconds, 7200, 'a two-hour mock starts with exactly 120 minutes');
+  const startedAt = new Date(Date.now() - 126_000);
+  assignment.startedAt = startedAt;
   progress[0].status = 'completed';
   progress[0].score = 2;
   const response = await start();
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.startedAt, startedAt);
+  assert.ok(response.body.remainingSeconds >= 7073 && response.body.remainingSeconds <= 7074, 'server time is used for the resumed countdown');
   assert.equal(progress[0].status, 'completed');
   assert.equal(progress[0].score, 2);
+  assignment.startedAt = new Date(Date.now() - 8_000_000);
+  assert.equal((await start()).body.remainingSeconds, 0, 'expired attempts cannot gain more time by resuming');
 });
 
 test('completed legacy mocks without a saved order can start a fresh attempt', async () => {

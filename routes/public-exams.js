@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/database');
 const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
-const { isEnglishSubject, selectedSubjects, matchesSubjects, sessionSubjects } = require('../utils/mock-subjects');
+const { isEnglishSubject, matchesSubjects } = require('../utils/mock-subjects');
 const { lockQuiz } = require('../utils/quiz-editing');
+const { assertPublicMockRetakeAllowed, publicMockSubjects } = require('../utils/public-mock');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -20,10 +21,6 @@ function eligibleQuiz(quiz) {
     : quiz.questionSets.length === 4;
   return quiz.viewResults && validPool && quiz.questionSets.every((set) =>
     set.questions.length > 0 && set.questions.every((question) => AUTO_GRADED_TYPES.has(question.type)));
-}
-
-function mockQuestions(quiz) {
-  return Object.fromEntries(quiz.questionSets.map((set) => [set.questionSetId, set.questions.map(publicQuestion)]));
 }
 
 function publicResult(attempt) {
@@ -46,6 +43,7 @@ router.get('/question-sets', async (_req, res) => {
     res.json({ success: true, questionSets: ids.filter((id) => byId.has(id)).map((id) => ({ _id: id, title: byId.get(id).title, ...setStats.get(id) })),
       availableCombinations: available.filter((quiz) => !quiz.studentSelectsSubjects).map((quiz) => quiz.questionSets.map((set) => set.questionSetId)),
       mocks: available.map((quiz) => ({ id: quiz.id, title: quiz.title,
+        multipleAttempts: quiz.multipleAttempts === true, looseFocus: quiz.looseFocus === true,
         studentSelectsSubjects: quiz.studentSelectsSubjects === true,
         compulsoryQuestionSetId: quiz.studentSelectsSubjects ? quiz.questionSets.find((set) => isEnglishSubject(set.title))?.questionSetId : undefined,
         questionSetIds: quiz.questionSets.map((set) => set.questionSetId),
@@ -77,12 +75,19 @@ router.post('/mock/sessions', async (req, res) => {
       if (!current?.isActive || !current.isOpenQuiz || !eligibleQuiz(current) || !matchesSubjects(current, ids)) {
         throw Object.assign(new Error('This mock has changed. Choose your subjects again.'), { statusCode: 409 });
       }
-      const chosenSets = selectedSubjects(current, ids);
-      const saved = await tx.publicMockSession.create({ data: { quizId: current.id, name, email,
-        selectedQuestionSetIds: current.studentSelectsSubjects ? ids : [] } });
+      await assertPublicMockRetakeAllowed(tx, current, email);
+      const latest = await tx.publicMockSession.findFirst({ where: { quizId: current.id, email },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], include: { attempt: true } });
+      const saved = latest && !latest.attempt ? latest : await tx.publicMockSession.create({
+        data: { quizId: current.id, name, email, selectedQuestionSetIds: ids } });
+      const chosenSets = publicMockSubjects({ ...saved, quiz: current });
+      const durationSeconds = current.durationHours * 3600 + current.durationMinutes * 60 + current.durationSeconds;
       return { id: saved.id, quizId: current.id, title: current.title,
-        durationSeconds: current.durationHours * 3600 + current.durationMinutes * 60 + current.durationSeconds,
-        questionsBySet: mockQuestions({ questionSets: chosenSets }) };
+        multipleAttempts: current.multipleAttempts === true, looseFocus: current.looseFocus === true,
+        durationSeconds, remainingSeconds: Math.max(0, durationSeconds - Math.max(0, Math.floor((Date.now() - saved.createdAt.getTime()) / 1000))),
+        questionSetIds: chosenSets.map((set) => set.questionSetId),
+        questionsBySet: Object.fromEntries(chosenSets.map((set) => [set.questionSetId,
+          set.questions.map((question, index) => ({ ...publicQuestion(question), order: index + 1 }))])) };
     });
     res.status(201).json({ success: true, session });
   } catch (error) { sendError(res, error); }
@@ -91,26 +96,29 @@ router.post('/mock/sessions', async (req, res) => {
 router.post('/mock/sessions/:id/submit', async (req, res) => {
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid session' });
-    const session = await prisma.publicMockSession.findUnique({ where: { id: req.params.id }, include: { attempt: true, quiz: { include: quizInclude } } });
+    const session = await prisma.publicMockSession.findUnique({ where: { id: req.params.id }, select: { id: true, quizId: true } });
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-    const questions = sessionSubjects(session).flatMap((set) => set.questions);
-    const ids = new Set(questions.map((question) => question.id));
-    if (!validateAnswers(req.body?.answers, ids)) return res.status(400).json({ success: false, message: 'Answers contain invalid question IDs or values' });
-    let attempt = session.attempt;
-    if (!attempt) {
-      const result = gradeQuestions(questions, req.body.answers);
-      try {
-        attempt = await prisma.publicMockAttempt.create({ data: { sessionId: session.id, ...result, answers: req.body.answers } });
-      } catch (error) {
-        if (error.code !== 'P2002') throw error;
-        attempt = await prisma.publicMockAttempt.findUnique({ where: { sessionId: session.id } });
+    const result = await prisma.$transaction(async (tx) => {
+      await lockQuiz(tx, session.quizId);
+      // Re-read after locking: concurrent submissions and starts share this lock.
+      const current = await tx.publicMockSession.findUnique({ where: { id: session.id }, include: { attempt: true, quiz: { include: quizInclude } } });
+      if (!current) throw Object.assign(new Error('Session not found'), { statusCode: 404 });
+      const questions = publicMockSubjects(current).flatMap((set) => set.questions);
+      const ids = new Set(questions.map((question) => question.id));
+      if (!validateAnswers(req.body?.answers, ids)) throw Object.assign(new Error('Answers contain invalid question IDs or values'), { statusCode: 400 });
+      let attempt = current.attempt;
+      if (!attempt) {
+        await assertPublicMockRetakeAllowed(tx, current.quiz, current.email);
+        const result = gradeQuestions(questions, req.body.answers);
+        attempt = await tx.publicMockAttempt.create({ data: { sessionId: current.id, ...result, answers: req.body.answers } });
       }
-    }
-    const grade = await prisma.publicMockGrade.upsert({ where: { quizId_email: { quizId: session.quizId, email: session.email } },
-      create: { quizId: session.quizId, email: session.email, attemptId: attempt.id,
-        score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.percentage }, update: {} });
-    res.json({ success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id,
-      review: reviewQuestions(questions, attempt.answers) });
+      const grade = await tx.publicMockGrade.upsert({ where: { quizId_email: { quizId: current.quizId, email: current.email } },
+        create: { quizId: current.quizId, email: current.email, attemptId: attempt.id,
+          score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.percentage }, update: {} });
+      return { success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id,
+        review: current.quiz.viewAnswer === false ? [] : reviewQuestions(questions, attempt.answers) };
+    });
+    res.json(result);
   } catch (error) { sendError(res, error); }
 });
 

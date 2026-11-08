@@ -5,6 +5,7 @@ const { selectedSubjects, sessionSubjects, matchesSubjects, isEnglishSubject } =
 const ids = Array.from({ length: 6 }, (_, index) => `00000000-0000-4000-8000-00000000000${index + 1}`);
 const quiz = { id: '10000000-0000-4000-8000-000000000001', title: 'All-subject mock', isActive: true, isOpenQuiz: true,
   examType: 'multi-subject', studentSelectsSubjects: true, viewResults: true, durationHours: 2, durationMinutes: 0, durationSeconds: 0,
+  multipleAttempts: true,
   questionSets: ['Use of English', 'Physics', 'Biology', 'Chemistry', 'Mathematics', 'Economics'].map((title, index) => ({
     questionSetId: ids[index], title, orderNum: index + 1, totalPoints: index + 1,
     questions: [{ id: `question-${index + 1}`, type: 'multiple-choice', question: 'Question?', options: ['A', 'B'], correctAnswer: 'A', points: index + 1 }],
@@ -32,7 +33,8 @@ const db = {
   quiz: { findMany: async () => [quiz], findUnique: async () => quiz },
   questionSet: { findMany: async () => quiz.questionSets.map((set) => ({ id: set.questionSetId, title: set.title })), count: async () => 4 },
   publicMockSession: {
-    create: async ({ data }) => { session = { id: '30000000-0000-4000-8000-000000000001', ...data, quiz }; return session; },
+    findFirst: async () => session ? { ...session, attempt } : null,
+    create: async ({ data }) => { session = { id: '30000000-0000-4000-8000-000000000001', createdAt: new Date(), ...data, quiz }; attempt = null; return session; },
     findUnique: async () => ({ ...session, attempt }),
   },
   publicMockAttempt: { create: async ({ data }) => { attempt = { id: `attempt-${++attemptSequence}`, ...data }; return attempt; } },
@@ -70,7 +72,6 @@ test('public pool mocks save the chosen subjects and grade/review only that pape
   const invalid = await invoke('post', '/mock/sessions/:id/submit', { answers: [{ questionId: 'question-2', answer: 'A' }] }, { id: session.id });
   assert.equal(invalid.statusCode, 400, 'reject questions from a subject outside the saved choices');
   const originalGrade = grade;
-  attempt = null;
   await invoke('post', '/mock/sessions', { quizId: quiz.id, name: 'Student', email: 'student@example.com', questionSetIds: ids.slice(0, 4) });
   const retake = await invoke('post', '/mock/sessions/:id/submit', { answers: [] }, { id: session.id });
   assert.equal(retake.body.attempt.totalPoints, 10);

@@ -34,7 +34,7 @@ test('public mocks list exam titles and start the selected exam when subjects ov
       findMany: async () => setIds.map((id, index) => ({ id, title: `Subject ${index + 1}` })),
       count: async () => 4,
     },
-    publicMockSession: { create: async ({ data }) => { selectedQuizId = data.quizId; return { id: 'session-id' }; } },
+    publicMockSession: { findFirst: async () => null, create: async ({ data }) => { selectedQuizId = data.quizId; return { id: 'session-id', createdAt: new Date(), ...data }; } },
     $queryRaw: async () => [],
     $transaction: async (run) => run(require.cache[databasePath].exports),
   } };
