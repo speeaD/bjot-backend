@@ -9,6 +9,7 @@ const quizzes = quizIds.map((id, index) => ({
   id,
   title: index ? 'New public mock' : 'Old public mock',
   viewResults: true,
+  examType: 'multi-subject',
   isActive: true, isOpenQuiz: true,
   durationHours: 0,
   durationMinutes: 30,

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const prisma = require("../utils/database");
-const { lockQuiz } = require('../utils/quiz-editing');
+const { publicMockTransaction, isPublicMockBusyError } = require('../utils/public-mock-transaction');
 const { assertPublicMockRetakeAllowed, publicMockSubjects } = require('../utils/public-mock');
 const { ensurePublicMockDevice, requirePublicMockDevice } = require('../utils/public-mock-device');
 const { isEnglishSubject, selectedSubjects, matchesSubjects } = require('../utils/mock-subjects');
@@ -22,9 +22,10 @@ const include = {
 };
 const fail = (res, error) => {
   console.error("Public quiz error:", error);
+  const busy = isPublicMockBusyError(error);
   return res
-    .status(error.statusCode || 500)
-    .json({ success: false, message: error.statusCode ? error.message : "Unable to complete quiz request" });
+    .status(busy ? 503 : error.statusCode || 500)
+    .json({ success: false, message: busy ? 'The exam service is busy. Please try again.' : error.statusCode ? error.message : "Unable to complete quiz request" });
 };
 const available = (quiz) =>
   quiz.isActive &&
@@ -280,8 +281,8 @@ router.post("/:quizId/submit", async (req, res) => {
         });
     }
     const deviceHash = requirePublicMockDevice(req);
-    const submission = await prisma.$transaction(async (tx) => {
-    await lockQuiz(tx, req.params.quizId);
+    const normalizedEmail = email.trim().toLowerCase();
+    const submission = await publicMockTransaction(prisma, { quizId: req.params.quizId, email: normalizedEmail, deviceHash }, async (tx) => {
     const quiz = await tx.quiz.findUnique({
       where: { id: req.params.quizId },
       include,
@@ -297,7 +298,6 @@ router.post("/:quizId/submit", async (req, res) => {
     )
       throw Object.assign(new Error('Invalid answers'), { statusCode: 400 });
     const result = gradeQuestions(questions, answers);
-    const normalizedEmail = email.trim().toLowerCase();
     await assertPublicMockRetakeAllowed(tx, quiz, normalizedEmail, deviceHash);
     const session = await tx.publicMockSession.create({
       data: { quizId: quiz.id, name: name.trim(), email: normalizedEmail, deviceHash,

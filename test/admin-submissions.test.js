@@ -17,7 +17,10 @@ let sequence;
 const sorted = (rows) => [...rows].sort((a, b) => b.submittedAt - a.submittedAt || b.id.localeCompare(a.id));
 const selected = (where) => assigned.filter((row) => !where?.quizTaker || row.quizTaker.accountType === where.quizTaker.accountType);
 const database = {
-  $queryRaw: async (parts, id) => { assert.match(parts.join(''), /FROM quizzes[\s\S]*FOR UPDATE/); return [{ id }]; },
+  $queryRaw: async (parts, id) => {
+    if (parts.join('').includes('pg_advisory_xact_lock')) return [];
+    assert.match(parts.join(''), /FROM quizzes[\s\S]*FOR SHARE/); return [{ id }];
+  },
   $transaction: async (run) => run(database),
   quiz: { findMany: async () => [quiz], findUnique: async () => quiz },
   questionSet: { count: async () => 4 },

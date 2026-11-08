@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { orderedQuestions } = require('../utils/question-order');
 const { deviceHeaders, headersForDevice } = require('./helpers/public-device');
 const { requirePublicMockDevice } = require('../utils/public-mock-device');
+const { transactionLocks } = require('./helpers/transaction-locks');
 
 const uuid = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 let quiz;
@@ -11,7 +12,6 @@ let attempts;
 let grades;
 let sequence;
 let locks;
-let transactionQueue = Promise.resolve();
 const hydrated = (session) => session && ({ ...session, quiz, attempt: attempts.find((attempt) => attempt.sessionId === session.id) || null });
 function matchesSession(session, where) {
   const hasAttempt = attempts.some((attempt) => attempt.sessionId === session.id);
@@ -43,13 +43,15 @@ const db = {
     if (!grade) { grade = create; grades.push(grade); }
     return grade;
   } },
-  $queryRaw: async (parts, id) => { assert.match(parts.join(''), /FROM quizzes[\s\S]*FOR UPDATE/); assert.equal(id, quiz.id); locks++; },
-  $transaction: (fn) => {
-    const result = transactionQueue.then(() => fn(db));
-    transactionQueue = result.catch(() => {});
-    return result;
+  $queryRaw: async (parts, id) => {
+    if (parts.join('').includes('pg_advisory_xact_lock')) { assert.equal(typeof id, 'bigint'); return []; }
+    assert.match(parts.join(''), /FROM quizzes[\s\S]*FOR SHARE/); assert.equal(id, quiz.id); locks++;
   },
 };
+db.$transaction = transactionLocks(db, (options) => {
+  assert.equal(options.maxWait, 10_000);
+  assert.equal(options.timeout, 20_000);
+}).transaction;
 const databasePath = require.resolve('../utils/database');
 require.cache[databasePath] = { id: databasePath, filename: databasePath, loaded: true, exports: db };
 const router = require('../routes/public-exams');
@@ -227,15 +229,17 @@ test('another browser cannot resume, submit or replay an attempt bound to the st
 
 test('concurrent starts with different emails cannot reserve two attempts on the same device', async () => {
   const browser = deviceHeaders('concurrent-device');
-  const responses = await Promise.all([start('first@example.com', undefined, browser), start('second@example.com', undefined, browser)]);
-  assert.deepEqual(responses.map((response) => response.statusCode), [201, 403]);
+  const emails = ['first@example.com', 'second@example.com'];
+  const responses = await Promise.all(emails.map((email) => start(email, undefined, browser)));
+  assert.deepEqual(responses.map((response) => response.statusCode).sort(), [201, 403]);
+  const winner = responses.findIndex((response) => response.statusCode === 201);
   assert.equal(sessions.length, 1);
-  assert.match(responses[1].body.message, /unfinished attempt/);
-  assert.equal((await start('first@example.com', undefined, browser)).body.session.id, responses[0].body.session.id);
+  assert.match(responses[1 - winner].body.message, /unfinished attempt/);
+  assert.equal((await start(emails[winner], undefined, browser)).body.session.id, responses[winner].body.session.id);
   const spare = { ...sessions[0], id: uuid(sequence++), email: 'preexisting@example.com' };
   sessions.push(spare);
   const submitted = await Promise.all([submit(sessions[0].id, [], browser), submit(spare.id, [], browser)]);
-  assert.deepEqual(submitted.map((response) => response.statusCode), [200, 403]);
+  assert.deepEqual(submitted.map((response) => response.statusCode).sort(), [200, 403]);
   assert.equal(attempts.length, 1);
 });
 
@@ -274,4 +278,40 @@ test('missing device cookies cannot bypass enforcement, and the listing bootstra
   const registered = await call(router, 'get', '/question-sets', undefined, {}, {});
   assert.equal(registered.statusCode, 200);
   assert.equal(registered.cookies[0][0], 'bjot_public_mock_device');
+});
+
+test('transaction expiry and pool contention return a retryable error on every public write route', async () => {
+  const first = (await start()).body.session;
+  const originalTransaction = db.$transaction;
+  try {
+    for (const code of ['P2028', 'P2024', 'P2034']) {
+      db.$transaction = async () => { throw Object.assign(new Error('Internal database details'), { code }); };
+      for (const response of [await start(), await submit(first.id), await legacySubmit()]) {
+        assert.equal(response.statusCode, 503);
+        assert.equal(response.body.message, 'The exam service is busy. Please try again.');
+      }
+    }
+  } finally { db.$transaction = originalTransaction; }
+  assert.equal(attempts.length, 0);
+  assert.equal((await submit(first.id)).statusCode, 200, 'the same attempt can be retried safely');
+});
+
+test('known exam IDs avoid listing every paper, and question formatting/review runs after commit', async () => {
+  const originalTransaction = db.$transaction;
+  const originalFindMany = db.quiz.findMany;
+  let transactionActive = false;
+  db.quiz.findMany = () => assert.fail('starting a chosen exam must not load every public paper');
+  db.$transaction = async (run, options) => {
+    transactionActive = true;
+    try { return await originalTransaction(run, options); }
+    finally { transactionActive = false; }
+  };
+  const question = quiz.questionSets[0].questions[0];
+  Object.defineProperty(question, 'options', { configurable: true, get() { assert.equal(transactionActive, false, 'question delivery happens outside the transaction'); return ['Wrong', 'Right']; } });
+  let first;
+  try { first = (await start()).body.session; }
+  finally { db.quiz.findMany = originalFindMany; delete question.options; question.options = ['Wrong', 'Right']; }
+  Object.defineProperty(question, 'metadata', { get() { assert.equal(transactionActive, false, 'review formatting happens outside the transaction'); return { explanation: 'Explanation' }; } });
+  try { assert.equal((await submit(first.id)).statusCode, 200); }
+  finally { db.$transaction = originalTransaction; }
 });

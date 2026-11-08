@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/database');
 const { AUTO_GRADED_TYPES, publicQuestion, gradeQuestions, reviewQuestions, validateAnswers, selectedTestQuestions } = require('../utils/public-exam');
-const { isEnglishSubject, matchesSubjects } = require('../utils/mock-subjects');
-const { lockQuiz } = require('../utils/quiz-editing');
+const { isEnglishSubject, matchesSubjects, sessionSubjects } = require('../utils/mock-subjects');
+const { publicMockTransaction, isPublicMockBusyError } = require('../utils/public-mock-transaction');
 const { assertPublicMockRetakeAllowed, assertPublicMockDevice, publicMockSubjects } = require('../utils/public-mock');
 const { ensurePublicMockDevice, requirePublicMockDevice } = require('../utils/public-mock-device');
 
@@ -13,7 +13,9 @@ const quizInclude = { questionSets: { orderBy: { orderNum: 'asc' }, include: { q
 
 function sendError(res, error) {
   console.error('Public exam error:', error);
-  return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'Unable to complete exam request' });
+  const busy = isPublicMockBusyError(error);
+  return res.status(busy ? 503 : error.statusCode || 500).json({ success: false,
+    message: busy ? 'The exam service is busy. Please try again.' : error.statusCode ? error.message : 'Unable to complete exam request' });
 }
 
 function eligibleQuiz(quiz) {
@@ -67,16 +69,16 @@ router.post('/mock/sessions', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Choose a valid free mock' });
     }
     const deviceHash = requirePublicMockDevice(req);
-    const quizzes = await findOpenQuizzes();
-    const quiz = quizzes.find((item) => (!body.quizId || item.id === body.quizId) && matchesSubjects(item, ids));
+    // Current clients choose an exam ID. Do not load every open paper to start it.
+    const quiz = body.quizId ? { id: body.quizId }
+      : (await findOpenQuizzes()).find((item) => matchesSubjects(item, ids));
     if (!quiz) return res.status(404).json({ success: false, message: 'No free mock is available for this subject combination' });
     const activeSets = await prisma.questionSet.count({ where: { id: { in: ids }, isActive: true } });
     if (activeSets !== 4) return res.status(404).json({ success: false, message: 'One or more subjects are unavailable' });
-    const session = await prisma.$transaction(async (tx) => {
-      await lockQuiz(tx, quiz.id);
+    const started = await publicMockTransaction(prisma, { quizId: quiz.id, email, deviceHash }, async (tx) => {
       const current = await tx.quiz.findUnique({ where: { id: quiz.id }, include: quizInclude });
-      if (!current?.isActive || !current.isOpenQuiz || !eligibleQuiz(current) || !matchesSubjects(current, ids)) {
-        throw Object.assign(new Error('This mock has changed. Choose your subjects again.'), { statusCode: 409 });
+      if (!current?.isActive || !current.isOpenQuiz || current.examType !== 'multi-subject' || !eligibleQuiz(current) || !matchesSubjects(current, ids)) {
+        throw Object.assign(new Error('No free mock is available for this subject combination'), { statusCode: 404 });
       }
       await assertPublicMockRetakeAllowed(tx, current, email, deviceHash);
       const activeDeviceSession = await tx.publicMockSession.findFirst({ where: { quizId: current.id, deviceHash, attempt: { is: null } } });
@@ -92,15 +94,18 @@ router.post('/mock/sessions', async (req, res) => {
       } else {
         saved = await tx.publicMockSession.create({ data: { quizId: current.id, name, email, deviceHash, selectedQuestionSetIds: ids } });
       }
-      const chosenSets = publicMockSubjects({ ...saved, quiz: current });
-      const durationSeconds = current.durationHours * 3600 + current.durationMinutes * 60 + current.durationSeconds;
-      return { id: saved.id, quizId: current.id, title: current.title,
-        multipleAttempts: current.multipleAttempts === true, looseFocus: current.looseFocus === true,
-        durationSeconds, remainingSeconds: Math.max(0, durationSeconds - Math.max(0, Math.floor((Date.now() - saved.createdAt.getTime()) / 1000))),
-        questionSetIds: chosenSets.map((set) => set.questionSetId),
-        questionsBySet: Object.fromEntries(chosenSets.map((set) => [set.questionSetId,
-          set.questions.map((question, index) => ({ ...publicQuestion(question), order: index + 1 }))])) };
+      return { saved, quiz: current };
     });
+    // Shuffle and format only after commit, without keeping database locks open.
+    const { saved, quiz: current } = started;
+    const chosenSets = publicMockSubjects({ ...saved, quiz: current });
+    const durationSeconds = current.durationHours * 3600 + current.durationMinutes * 60 + current.durationSeconds;
+    const session = { id: saved.id, quizId: current.id, title: current.title,
+      multipleAttempts: current.multipleAttempts === true, looseFocus: current.looseFocus === true,
+      durationSeconds, remainingSeconds: Math.max(0, durationSeconds - Math.max(0, Math.floor((Date.now() - saved.createdAt.getTime()) / 1000))),
+      questionSetIds: chosenSets.map((set) => set.questionSetId),
+      questionsBySet: Object.fromEntries(chosenSets.map((set) => [set.questionSetId,
+        set.questions.map((question, index) => ({ ...publicQuestion(question), order: index + 1 }))])) };
     res.status(201).json({ success: true, session });
   } catch (error) { sendError(res, error); }
 });
@@ -109,15 +114,14 @@ router.post('/mock/sessions/:id/submit', async (req, res) => {
   try {
     if (!UUID.test(req.params.id)) return res.status(400).json({ success: false, message: 'Invalid session' });
     const deviceHash = requirePublicMockDevice(req);
-    const session = await prisma.publicMockSession.findUnique({ where: { id: req.params.id }, select: { id: true, quizId: true } });
+    const session = await prisma.publicMockSession.findUnique({ where: { id: req.params.id }, select: { id: true, quizId: true, email: true } });
     if (!session) return res.status(404).json({ success: false, message: 'Session not found' });
-    const result = await prisma.$transaction(async (tx) => {
-      await lockQuiz(tx, session.quizId);
+    const result = await publicMockTransaction(prisma, { quizId: session.quizId, email: session.email, deviceHash }, async (tx) => {
       // Re-read after locking: concurrent submissions and starts share this lock.
       const current = await tx.publicMockSession.findUnique({ where: { id: session.id }, include: { attempt: true, quiz: { include: quizInclude } } });
       if (!current) throw Object.assign(new Error('Session not found'), { statusCode: 404 });
       assertPublicMockDevice(current, deviceHash);
-      const questions = publicMockSubjects(current).flatMap((set) => set.questions);
+      const questions = sessionSubjects(current).flatMap((set) => set.questions);
       const ids = new Set(questions.map((question) => question.id));
       if (!validateAnswers(req.body?.answers, ids)) throw Object.assign(new Error('Answers contain invalid question IDs or values'), { statusCode: 400 });
       let attempt = current.attempt;
@@ -130,10 +134,11 @@ router.post('/mock/sessions/:id/submit', async (req, res) => {
       const grade = await tx.publicMockGrade.upsert({ where: { quizId_email: { quizId: current.quizId, email: current.email } },
         create: { quizId: current.quizId, email: current.email, attemptId: attempt.id,
           score: attempt.score, totalPoints: attempt.totalPoints, percentage: attempt.percentage }, update: {} });
-      return { success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id,
-        review: current.quiz.viewAnswer === false ? [] : reviewQuestions(questions, attempt.answers) };
+      return { current, attempt, grade };
     });
-    res.json(result);
+    const { current, attempt, grade } = result;
+    res.json({ success: true, attempt: publicResult(attempt), gradedResult: publicResult(grade), countsForGrade: grade.attemptId === attempt.id,
+      review: current.quiz.viewAnswer === false ? [] : reviewQuestions(publicMockSubjects(current).flatMap((set) => set.questions), attempt.answers) });
   } catch (error) { sendError(res, error); }
 });
 
