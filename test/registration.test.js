@@ -38,7 +38,7 @@ beforeEach(() => { available = subjects.map((subject) => ({ ...subject })); writ
 
 async function call(ids) {
   const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
-  await register({ body: { accountType: 'premium', firstname: 'Test', lastname: 'Student', email: 'test@example.com', questionSetCombination: ids } }, response);
+  await register({ body: { accountType: 'premium', subscriptionLevel: 'pro-max', subscriptionPlanId: 'admin-pro-max', subscriptionExpiresAt: '2099-01-01T00:00:00Z', firstname: 'Test', lastname: 'Student', email: 'test@example.com', questionSetCombination: ids } }, response);
   return response;
 }
 const ids = (indices) => indices.map((index) => subjects[index].id);
@@ -49,6 +49,9 @@ test('registration saves English plus three different subjects', async () => {
   assert.equal(writes, 1);
   assert.deepEqual(savedCombination.map((item) => item.questionSetId), selected);
   assert.equal(createdData.accountType, 'regular');
+  assert.equal(createdData.subscriptionLevel, undefined, 'public registration cannot grant a paid tier');
+  assert.equal(createdData.subscriptionPlanId, undefined);
+  assert.equal(createdData.subscriptionExpiresAt, undefined);
   assert.equal(createdData.isActive, true);
   assert.equal(createdData.accessCode.length, 9);
 });

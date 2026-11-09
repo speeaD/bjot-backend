@@ -31,7 +31,19 @@ Server-owned prices match `quiztaker-bjot/src/lib/pricing.ts`; the browser submi
 - Same-level purchases extend existing paid expiry. Higher-level monthly purchases begin immediately for their full duration, preserving any later existing expiry. Pro Max retains its fixed cutoff; upgrades from access lasting beyond that date require staff assistance. Lower-level purchases are blocked while a higher level is active. Pro Max cannot be repurchased while active.
 - Existing premium accounts retain their existing class access. They do not gain Pro past-question access unless they have an explicit Pro entitlement. Existing paid students can be migrated deliberately with an audited plan ID, level and expiry; no historical plan is guessed.
 - Expired paid subscriptions behave as regular on each authenticated request. Login and dashboard report the effective access, regardless of stale client state or JWTs.
-- JAMB Practice's existing maintenance block is preserved. Pro authorization runs before maintenance on the API; removing the named maintenance middleware later must retain both authentication and `requirePro`.
+- JAMB Practice is open to active Pro and Pro Max students. Every practice endpoint retains student authentication and `requirePro`; regular, Lite, expired, and legacy premium accounts without a Pro entitlement remain blocked. Only published papers with usable questions are available. The student dashboard, navigation, page, and authenticated API proxy all open the live practice flow.
+
+## Admin student plans
+
+The admin student directory displays Lite, Pro, Pro Max, regular, and premium accounts with no recorded tier. Each student shows their expiry and whether JAMB past-question CBT is enabled, expired, locked, or blocked by an inactive account. Plan filters and CSV exports use the saved subscription fields.
+
+Use **Manage plan** beside an existing student to assign their confirmed tier and access-through date. Dates are inclusive calendar days in Africa/Lagos; resaving an unchanged date preserves the exact original paid expiry timestamp. Paid plans require a future expiry, and Pro Max cannot extend beyond `PRO_MAX_EXPIRES_AT`. Save applies the same `subscriptionLevel`/`subscriptionExpiresAt` fields that student authentication and `requirePro` evaluate on the next request. No new login is needed.
+
+Existing premium accounts with no tier stay **Premium — plan not set**. The application cannot infer which offline students purchased Pro versus Pro Max; an administrator must explicitly assign the confirmed plan and expiry. These changes never automatically convert the whole premium cohort or fabricate payment receipts. Same-tier edits preserve an existing catalogue plan ID; manually assigned tiers without a matching catalogue record use `admin-lite`, `admin-pro`, or `admin-pro-max` as their plan ID.
+
+The add-student form supports the same plan fields. CSV/Excel imports accept `subscriptionLevel` (`lite`, `pro`, `pro-max`) and `subscriptionExpiresAt` (an ISO timestamp with timezone); both columns are present in the updated download template. Blank plan fields keep legacy premium behavior with no Pro access. Imports continue to create new students; use Manage plan for an existing student. Downgrading to regular clears stored paid entitlements, and a later generic premium upgrade does not restore them.
+
+Admin subscription updates take the same student row lock as payment fulfillment. The payment ledger and provider checkout amounts remain unchanged. Deploy the backend followed by the admin portal; the subscription columns already exist, so this admin feature needs no new migration. The JAMB reopening still also requires the student portal deployment described above.
 
 ## Confirmation and recovery
 

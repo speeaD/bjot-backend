@@ -5,6 +5,7 @@ const prisma = require("../utils/database");
 const multer = require("multer");
 const XLSX = require("xlsx");
 const { listAdminSubmissions, publicSubmission, publicAttemptInclude } = require('../utils/admin-submissions');
+const { adminSubscriptionOptions, adminStudent, subscriptionUpdate } = require('../utils/admin-subscriptions');
 // const { sendAccessCodeEmail } = require("../utils/emailService");
 
 
@@ -123,6 +124,10 @@ router.post(
           }
 
           const name = row.name?.toString().trim() || "";
+          const membership = subscriptionUpdate({}, { accountType,
+            ...(row.subscriptionLevel && { subscriptionLevel: row.subscriptionLevel.toString().trim().toLowerCase() }),
+            ...(row.subscriptionExpiresAt && { subscriptionExpiresAt: row.subscriptionExpiresAt.toString().trim() }),
+          });
           let questionSetIds = [];
           let accessCode = null;
 
@@ -201,6 +206,7 @@ router.post(
                 accountType,
                 email,
                 name,
+                ...membership,
                 ...(accountType === "premium" && { accessCode }),
               },
             });
@@ -232,6 +238,8 @@ router.post(
             row: rowNumber,
             email,
             accountType,
+            subscriptionLevel: quizTaker.subscriptionLevel || null,
+            subscriptionExpiresAt: quizTaker.subscriptionExpiresAt || null,
             ...(accountType === "premium" && { accessCode }),
           });
         } catch (error) {
@@ -275,6 +283,8 @@ router.get("/download-template", verifyAdmin, (req, res) => {
         email: "student@example.com",
         name: "John Doe",
         accountType: "premium",
+        subscriptionLevel: 'pro',
+        subscriptionExpiresAt: new Date(Date.now() + 30 * 86400_000).toISOString(),
         questionSet1: "Math Basics",
         questionSet2: "Physics 101",
         questionSet3: "Chemistry",
@@ -284,6 +294,8 @@ router.get("/download-template", verifyAdmin, (req, res) => {
         email: "regular@example.com",
         name: "Jane Smith",
         accountType: "regular",
+        subscriptionLevel: '',
+        subscriptionExpiresAt: '',
         questionSet1: "",
         questionSet2: "",
         questionSet3: "",
@@ -336,6 +348,7 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
         message: 'Account type must be "premium" or "regular"',
       });
     }
+    const membership = subscriptionUpdate({}, req.body);
 
     // Check for existing quiz taker
     // Changed from: QuizTaker.findOne({ email, accountType })
@@ -379,6 +392,7 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
           accountType,
           email,
           name: name || null,
+          ...membership,
           ...(accountType === "premium" && { accessCode }),
         },
       });
@@ -415,13 +429,13 @@ router.post("/quiztaker", verifyAdmin, async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Quiz taker created successfully",
-      quizTaker,
+      quizTaker: adminStudent(quizTaker),
     });
   } catch (error) {
     console.error("Create quiz taker error:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Server error",
+      message: error.statusCode ? error.message : "Server error",
       error: error.message,
     });
   }
@@ -493,7 +507,8 @@ router.get("/quiztakers", verifyAdmin, async (req, res) => {
       total,
       page: parseInt(page),
       pages: Math.ceil(total / parseInt(limit)),
-      quizTakers,
+      quizTakers: quizTakers.map((student) => adminStudent(student)),
+      subscriptionOptions: adminSubscriptionOptions(),
     });
   } catch (error) {
     console.error("Get quiz takers error:", error);
@@ -551,7 +566,7 @@ router.get("/quiztaker/:id", verifyAdmin, async (req, res) => {
 
     res.json({
       success: true,
-      quizTaker,
+      quizTaker: adminStudent(quizTaker),
     });
   } catch (error) {
     console.error("Get quiz taker error:", error);
@@ -608,7 +623,8 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
     }
 
     let accessCode = existingQuizTaker.accessCode;
-    if (accountType === 'premium' && !accessCode) {
+    const editingPlan = req.body.subscriptionLevel !== undefined || req.body.subscriptionExpiresAt !== undefined;
+    if ((accountType === 'premium' || (accountType !== 'regular' && editingPlan)) && !accessCode) {
       do {
         accessCode = generateAccessCode();
       } while (await prisma.quizTaker.findUnique({ where: { accessCode } }));
@@ -617,6 +633,11 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
     // Update quiz taker
     // Changed from: QuizTaker.findByIdAndUpdate()
     const quizTaker = await prisma.$transaction(async (tx) => {
+      // Coordinate manual changes with payment fulfillment for this student.
+      await tx.$queryRaw`SELECT id FROM quiz_takers WHERE id = ${req.params.id}::uuid FOR UPDATE`;
+      const current = await tx.quizTaker.findUnique({ where: { id: req.params.id } });
+      if (!current) throw Object.assign(new Error('Quiz taker not found'), { statusCode: 404 });
+      const membership = subscriptionUpdate(current, req.body);
       // Update basic fields
       const updated = await tx.quizTaker.update({
         where: { id: req.params.id },
@@ -625,7 +646,8 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
           ...(name !== undefined && { name }),
           ...(isActive !== undefined && { isActive }),
           ...(accountType !== undefined && { accountType }),
-          ...(accountType === 'premium' && { accessCode }),
+          ...((accountType === 'premium' || membership.accountType === 'premium') && { accessCode: current.accessCode || accessCode }),
+          ...membership,
         },
       });
 
@@ -668,13 +690,13 @@ router.put("/quiztaker/:id", verifyAdmin, async (req, res) => {
     res.json({
       success: true,
       message: "Quiz taker updated successfully",
-      quizTaker,
+      quizTaker: adminStudent(quizTaker),
     });
   } catch (error) {
     console.error("Update quiz taker error:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Server error",
+      message: error.statusCode ? error.message : "Server error",
       error: error.message,
     });
   }

@@ -49,18 +49,13 @@ const validAnswers = (value, questions) => value && typeof value === 'object' &&
     return question && typeof answer === 'string' && (answer === '' || question.options.includes(answer));
   });
 
-// JAMB Practice remains paused until paper preparation is complete.
-const practiceMaintenance = (_req, res) => res.status(503).json({
-  success: false, message: 'JAMB Practice is under maintenance. Please check back later.',
-});
-
 async function finish(db, attempt, answers) {
   const marked = grade(attempt.questionSnapshot, answers);
   return db.pastAttempt.update({ where: { id: attempt.id }, data: { answers, score: marked.score,
     submittedAt: new Date() } });
 }
 
-router.get('/availability', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.get('/availability', verifyQuizTaker, requirePro, handle(async (req, res) => {
   const [subjects, papers] = await Promise.all([
     prisma.questionSet.findMany({ where: { isActive: true }, select: { id: true, title: true }, orderBy: { title: 'asc' } }),
     prisma.pastPaper.findMany({ where: { sourceExam: EXAM, isPublished: true, questionCount: { gt: 0 }, questions: { some: {} } },
@@ -74,14 +69,14 @@ router.get('/availability', verifyQuizTaker, requirePro, practiceMaintenance, ha
       questionCount: item.questionCount })) });
 }));
 
-router.get('/attempts/active', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.get('/attempts/active', verifyQuizTaker, requirePro, handle(async (req, res) => {
   const attempts = await prisma.pastAttempt.findMany({ where: { quizTakerId: req.quizTaker.id, submittedAt: null },
     select: { id: true, year: true, startedAt: true, durationSeconds: true }, orderBy: { startedAt: 'desc' }, take: 10 });
   res.json({ success: true, attempts: attempts.map((item) => ({ ...item,
     expiresAt: new Date(item.startedAt.getTime() + item.durationSeconds * 1000) })) });
 }));
 
-router.post('/attempts', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.post('/attempts', verifyQuizTaker, requirePro, handle(async (req, res) => {
   const year = yearValue(req.body?.year);
   const ids = req.body?.subjectIds;
   if (!year || !Array.isArray(ids) || ids.length !== 4 || new Set(ids).size !== 4 || !ids.every((id) => typeof id === 'string' && UUID.test(id)))
@@ -110,7 +105,7 @@ router.post('/attempts', verifyQuizTaker, requirePro, practiceMaintenance, handl
   res.status(201).json({ success: true, attempt: attemptView(attempt) });
 }));
 
-router.get('/attempts/:id', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.get('/attempts/:id', verifyQuizTaker, requirePro, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   let attempt = await prisma.pastAttempt.findFirst({ where: { id: req.params.id, quizTakerId: req.quizTaker.id } });
   if (!attempt) fail(404, 'Practice attempt not found');
@@ -121,7 +116,7 @@ router.get('/attempts/:id', verifyQuizTaker, requirePro, practiceMaintenance, ha
   res.json(attempt.submittedAt ? { success: true, result: result(attempt) } : { success: true, attempt: attemptView(attempt) });
 }));
 
-router.patch('/attempts/:id/answers', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.patch('/attempts/:id/answers', verifyQuizTaker, requirePro, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const outcome = await prisma.$transaction(async (db) => {
     const attempt = await lockAttempt(db, req.params.id, req.quizTaker.id);
@@ -135,7 +130,7 @@ router.patch('/attempts/:id/answers', verifyQuizTaker, requirePro, practiceMaint
   res.json({ success: true, answers: outcome.attempt.answers });
 }));
 
-router.post('/attempts/:id/submit', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.post('/attempts/:id/submit', verifyQuizTaker, requirePro, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const attempt = await prisma.$transaction(async (db) => {
     const locked = await lockAttempt(db, req.params.id, req.quizTaker.id);
@@ -148,7 +143,7 @@ router.post('/attempts/:id/submit', verifyQuizTaker, requirePro, practiceMainten
   res.json({ success: true, result: result(attempt) });
 }));
 
-router.get('/attempts/:id/result', verifyQuizTaker, requirePro, practiceMaintenance, handle(async (req, res) => {
+router.get('/attempts/:id/result', verifyQuizTaker, requirePro, handle(async (req, res) => {
   if (!UUID.test(req.params.id)) fail(400, 'Invalid attempt ID');
   const attempt = await prisma.pastAttempt.findFirst({ where: { id: req.params.id, quizTakerId: req.quizTaker.id } });
   if (!attempt) fail(404, 'Practice attempt not found');

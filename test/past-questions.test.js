@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const jwt = require('jsonwebtoken');
 const { parseQuestionCsv, grade } = require('../utils/past-questions');
 
 const uuid = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
@@ -16,10 +17,15 @@ const papers = subjects.map((_, index) => makePaper(2024, index));
 papers.push(makePaper(2025, 0));
 let attempt;
 let writes;
+let authenticatedStudent;
+process.env.JWT_SECRET = 'jamb-practice-tests-only';
 const database = {
+  quizTaker: { findUnique: async ({ where }) => authenticatedStudent?.id === where.id ? authenticatedStudent : null },
   questionSet: { findMany: async ({ where }) => subjects.filter((subject) => !where?.id || where.id.in.includes(subject.id)) },
-  pastPaper: { findMany: async ({ where }) => papers.filter((paper) => paper.year === where.year && where.subjectId.in.includes(paper.subjectId) && paper.isPublished) },
+  pastPaper: { findMany: async ({ where }) => papers.filter((paper) => (!where.year || paper.year === where.year) &&
+    (!where.subjectId || where.subjectId.in.includes(paper.subjectId)) && paper.isPublished) },
   pastAttempt: {
+    findMany: async () => attempt && !attempt.submittedAt ? [attempt] : [],
     create: async ({ data }) => { attempt = { id: uuid(9999), ...data, answers: {}, score: null,
       startedAt: new Date(), submittedAt: null }; return attempt; },
     findFirst: async ({ where }) => attempt?.id === where.id && attempt?.quizTakerId === where.quizTakerId ? attempt : null,
@@ -35,7 +41,8 @@ const router = require('../routes/past-questions');
 const { requirePro } = require('../utils/subscriptions');
 const { verifyAdmin, verifyQuizTaker } = require('../middleware/auth');
 
-test.beforeEach(() => { attempt = null; writes = 0; });
+test.beforeEach(() => { attempt = null; writes = 0; authenticatedStudent = { id: studentId, accountType: 'premium', isActive: true,
+  subscriptionLevel: 'pro', subscriptionExpiresAt: new Date(Date.now() + 86400_000) }; });
 async function call(method, path, body = {}, params = {}, owner = studentId, accountType = 'premium') {
   const layer = router.stack.find((item) => item.route?.path === path && item.route.methods[method]);
   const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; return this; } };
@@ -43,6 +50,19 @@ async function call(method, path, body = {}, params = {}, owner = studentId, acc
   return response;
 }
 const start = (year = 2024) => call('post', '/attempts', { year, subjectIds });
+
+async function authenticatedCall(method, path, body = {}, params = {}, signedIn = true) {
+  const layer = router.stack.find((item) => item.route?.path === path && item.route.methods[method]);
+  const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(value) { this.body = value; return this; } };
+  const token = signedIn ? jwt.sign({ id: studentId, role: 'quiztaker' }, process.env.JWT_SECRET) : null;
+  const request = { body, params, header: (name) => name === 'Authorization' && token ? `Bearer ${token}` : undefined };
+  for (const handler of layer.route.stack) {
+    let next = false;
+    await handler.handle(request, response, () => { next = true; });
+    if (!next) break;
+  }
+  return response;
+}
 
 test('CSV import validates every row, answer text, and duplicate questions', () => {
   const header = 'Passage,Question,Option A,Option B,Option C,Option D,Option E,Correct Answer,Explanation';
@@ -59,6 +79,7 @@ test('student and admin routes keep their separate authorization guards', () => 
   assert.equal(student.route.stack[0].handle, verifyQuizTaker);
   for (const layer of router.stack.filter((item) => item.route && !item.route.path.startsWith('/admin'))) {
     assert.equal(layer.route.stack[1].handle, requirePro);
+    assert.equal(layer.route.stack.length, 3, 'authorized students reach practice without a maintenance blocker');
   }
   assert(router.stack.some((item) => item.handle === verifyAdmin));
 });
@@ -125,4 +146,44 @@ test('expired attempts submit only saved answers and reject late changes', async
   assert.equal(attempt.score, 1);
   const result = await call('get', '/attempts/:id/result', {}, { id: attempt.id });
   assert.equal(result.body.result.score, 1);
+});
+
+test('active Pro and Pro Max students can load, start, resume, save, submit and review through the full guarded route stack', async () => {
+  for (const level of ['pro', 'pro-max']) {
+    attempt = null;
+    authenticatedStudent.subscriptionLevel = level;
+    const available = await authenticatedCall('get', '/availability');
+    assert.equal(available.statusCode, 200);
+    assert.deepEqual(available.body.years, [2024, 2025]);
+    assert.equal((await authenticatedCall('get', '/attempts/active')).statusCode, 200);
+    const started = await authenticatedCall('post', '/attempts', { year: 2024, subjectIds });
+    assert.equal(started.statusCode, 201);
+    const id = started.body.attempt.id;
+    assert.equal((await authenticatedCall('get', '/attempts/:id', {}, { id })).statusCode, 200);
+    const questionId = attempt.questionSnapshot[0].id;
+    assert.equal((await authenticatedCall('patch', '/attempts/:id/answers', { answers: { [questionId]: 'Right' } }, { id })).statusCode, 200);
+    assert.equal((await authenticatedCall('post', '/attempts/:id/submit', {}, { id })).statusCode, 200);
+    const reviewed = await authenticatedCall('get', '/attempts/:id/result', {}, { id });
+    assert.equal(reviewed.statusCode, 200);
+    assert.equal(reviewed.body.result.score, 1);
+  }
+});
+
+test('every practice endpoint rejects regular, Lite, legacy premium and expired Pro students before practice data is read', async () => {
+  const routes = router.stack.filter((layer) => layer.route && !layer.route.path.startsWith('/admin')).map((layer) => layer.route);
+  for (const account of [
+    { accountType: 'regular' }, { accountType: 'premium' },
+    { accountType: 'premium', subscriptionLevel: 'lite' },
+    { accountType: 'premium', subscriptionLevel: 'pro', subscriptionExpiresAt: new Date(0) },
+  ]) {
+    authenticatedStudent = { id: studentId, isActive: true, ...account };
+    for (const route of routes) {
+      const response = await authenticatedCall(Object.keys(route.methods)[0], route.path, {}, { id: uuid(9999) });
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.body.code, 'PRO_REQUIRED');
+    }
+  }
+  assert.equal(attempt, null);
+  assert.equal(writes, 0);
+  assert.equal((await authenticatedCall('get', '/availability', {}, {}, false)).statusCode, 401);
 });
