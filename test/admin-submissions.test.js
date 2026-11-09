@@ -77,7 +77,8 @@ const { verifyAdmin } = require('../middleware/auth');
 test.beforeEach(() => {
   sequence = 100; sessions = []; attempts = []; grades = [];
   assigned = ['premium', 'regular'].map((accountType, i) => ({ id: uuid(50 + i), quizId: quiz.id,
-    quiz: { id: quiz.id, title: quiz.title, isOpenQuiz: true }, quizTakerId: uuid(60 + i),
+    quiz: { id: quiz.id, title: quiz.title, isOpenQuiz: true,
+      questionSets: quiz.questionSets.map(({ questionSetId, title, orderNum }) => ({ questionSetId, title, orderNum })) }, quizTakerId: uuid(60 + i),
     quizTaker: { id: uuid(60 + i), name: 'Enrolled student', email: 'student@example.com', accountType, accessCode: 'ABC123456' },
     status: 'auto-graded', score: 3, totalPoints: 4, percentage: 75, submittedAt: new Date(`2026-11-0${i + 1}T10:00:00Z`),
     questionSetSubmissions: [{ questionSetOrder: 1, score: 1, totalPoints: 1, percentage: 100 }] }));
@@ -121,6 +122,8 @@ test('a free public submission appears immediately in admin records with student
   assert.equal(row.percentage, 100);
   assert.equal(row.countsForGrade, true);
   assert.deepEqual(row.questionSetSubmissions.map((set) => [set.questionSetOrder, set.score]), [[1, 1], [2, 1], [3, 1], [4, 1]]);
+  assert.deepEqual(row.questionSetSubmissions.map((set) => [set.questionSetId, set.questionSetTitle]),
+    quiz.questionSets.map((set) => [set.questionSetId, set.title]));
   assert.equal('answers' in row, false);
 });
 
@@ -193,4 +196,19 @@ test('invalid pagination and filters are rejected', async () => {
   for (const query of [{ page: 0 }, { page: 'not-a-page' }, { limit: 0 }, { limit: 201 }, { accountType: 'unknown' }]) {
     await assert.rejects(listAdminSubmissions(database, query), { statusCode: 400 });
   }
+});
+
+test('assigned subject scores expose the actual subject even when it occupies another position in a different exam', async () => {
+  const english = { questionSetId: uuid(500), title: 'Use of English' };
+  const physics = { questionSetId: uuid(501), title: 'Physics' };
+  assigned[0].quiz = { ...assigned[0].quiz, questionSets: [{ ...physics, orderNum: 1 }, { ...english, orderNum: 5 }] };
+  assigned[0].questionSetSubmissions = [{ questionSetOrder: 5, score: 8, totalPoints: 10, percentage: 80 }];
+  assigned[1].quiz = { ...assigned[1].quiz, id: uuid(2), questionSets: [{ ...english, orderNum: 1 }, { ...physics, orderNum: 2 }] };
+  assigned[1].questionSetSubmissions = [{ questionSetOrder: 1, score: 6, totalPoints: 10, percentage: 60 }];
+  const rows = (await list()).body.submissions;
+  for (const row of rows) {
+    assert.equal(row.questionSetSubmissions[0].questionSetId, english.questionSetId);
+    assert.equal(row.questionSetSubmissions[0].questionSetTitle, english.title);
+  }
+  assert.deepEqual(rows.map((row) => row.questionSetSubmissions[0].questionSetOrder).sort(), [1, 5]);
 });

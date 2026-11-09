@@ -28,6 +28,8 @@ function publicSubmission(attempt, countsForGrade, includeAnswers = false) {
     countsForGrade,
     questionSetSubmissions: sets.map((set) => ({
       questionSetOrder: set.orderNum,
+      questionSetId: set.questionSetId,
+      questionSetTitle: set.title,
       ...gradeQuestions(set.questions, attempt.answers),
       submittedAt: attempt.submittedAt,
     })),
@@ -67,7 +69,8 @@ async function listAdminSubmissions(db, { accountType, page = '1', limit = '50' 
   const orderBy = [{ submittedAt: 'desc' }, { id: 'desc' }];
   const [assigned, publicAttempts] = await Promise.all([
     includeAssigned ? db.quizSubmission.findMany({ where,
-      include: { quiz: { select: { id: true, title: true, isOpenQuiz: true } },
+      include: { quiz: { select: { id: true, title: true, isOpenQuiz: true,
+        questionSets: { select: { questionSetId: true, title: true, orderNum: true } } } },
         quizTaker: { select: { id: true, email: true, name: true, accountType: true, accessCode: true } },
         questionSetSubmissions: { orderBy: { questionSetOrder: 'asc' } } },
       orderBy, take: Math.min(skip + limit, assignedTotal) }) : [],
@@ -75,7 +78,12 @@ async function listAdminSubmissions(db, { accountType, page = '1', limit = '50' 
       take: Math.min(skip + limit, publicTotal) }) : [],
   ]);
   const rows = [
-    ...assigned.map((row) => ({ ...row, source: 'assigned', countsForGrade: row.status !== 'in-progress' })),
+    ...assigned.map((row) => ({ ...row, source: 'assigned', countsForGrade: row.status !== 'in-progress',
+      questionSetSubmissions: row.questionSetSubmissions.map((set) => {
+        const subject = row.quiz.questionSets.find((item) => item.orderNum === set.questionSetOrder);
+        return { ...set, questionSetId: subject?.questionSetId ?? null, questionSetTitle: subject?.title ?? 'Unknown subject' };
+      }),
+    })),
     ...publicAttempts.map((row) => ({ ...row, source: 'public' })),
   ].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
     .slice(skip, skip + limit);
